@@ -24,11 +24,17 @@ import {
   SignupVerification,
   SignupVerificationDocument,
 } from './schemas/signup-verification.schema';
+import { TeacherInvite, TeacherInviteDocument } from './schemas/teacher-invite.schema';
 
 interface JwtPayload {
   sub: string;
   email: string;
   role: string;
+}
+
+interface TeacherInvitePayload {
+  email: string;
+  type: 'teacher-invite';
 }
 
 @Injectable()
@@ -40,6 +46,8 @@ export class AuthService {
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     @InjectModel(SignupVerification.name)
     private readonly signupVerificationModel: Model<SignupVerificationDocument>,
+    @InjectModel(TeacherInvite.name)
+    private readonly teacherInviteModel: Model<TeacherInviteDocument>,
     private readonly configService: ConfigService,
     private readonly jwtService: JwtService,
   ) {}
@@ -191,6 +199,131 @@ export class AuthService {
     return {
       user: request.user ?? null,
     };
+  }
+
+  async superadminLogin(email: string, password: string) {
+    const normalizedEmail = this.normalizeEmail(email);
+    const superadminEmail = this.normalizeEmail(
+      this.getRequiredEnv('SUPERADMIN_EMAIL'),
+    );
+    const superadminPassword = this.getRequiredEnv('SUPERADMIN_PASSWORD');
+
+    if (
+      normalizedEmail !== superadminEmail ||
+      password !== superadminPassword
+    ) {
+      throw new UnauthorizedException('Invalid superadmin credentials.');
+    }
+
+    const secret = this.getRequiredEnv('JWT_SUPERADMIN_SECRET');
+    const token = await this.jwtService.signAsync(
+      {
+        sub: 'superadmin',
+        email: superadminEmail,
+        role: 'superadmin',
+      },
+      { secret, expiresIn: '12h' },
+    );
+
+    return {
+      message: 'Superadmin login successful.',
+      token,
+    };
+  }
+
+  async inviteTeachers(emails: string[]) {
+    if (!Array.isArray(emails) || emails.length === 0) {
+      throw new BadRequestException('emails must be a non-empty array.');
+    }
+
+    const uniqueEmails = [...new Set(emails.map((item) => this.normalizeEmail(item)))];
+    const invited: string[] = [];
+    const skipped: { email: string; reason: string }[] = [];
+
+    for (const email of uniqueEmails) {
+      if (!email || !this.isValidEmail(email)) {
+        skipped.push({ email, reason: 'Invalid email format.' });
+        continue;
+      }
+
+      const userExists = await this.userModel.findOne({ email }).lean();
+      if (userExists) {
+        skipped.push({ email, reason: 'User already exists.' });
+        continue;
+      }
+
+      const inviteToken = await this.createTeacherInviteToken(email);
+      const tokenHash = this.hashOtp(inviteToken);
+      const expiresAt = new Date(Date.now() + this.daysToMs(3));
+
+      await this.teacherInviteModel.create({
+        email,
+        tokenHash,
+        expiresAt,
+        invitedBy: this.getRequiredEnv('SUPERADMIN_EMAIL'),
+      });
+
+      const inviteLink = `${this.getTeacherInviteBaseUrl()}?token=${encodeURIComponent(inviteToken)}`;
+      await this.sendTeacherInviteEmail(email, inviteLink);
+      invited.push(email);
+    }
+
+    return {
+      message: 'Teacher invitations processed.',
+      invitedCount: invited.length,
+      invited,
+      skipped,
+    };
+  }
+
+  async acceptTeacherInvite(
+    token: string,
+    password: string,
+    confirmPassword: string,
+  ) {
+    if (!token) {
+      throw new BadRequestException('Invitation token is required.');
+    }
+    this.validatePassword(password);
+    if (password !== confirmPassword) {
+      throw new BadRequestException('Password and confirmPassword must match.');
+    }
+
+    const payload = await this.verifyTeacherInviteToken(token);
+    const tokenHash = this.hashOtp(token);
+
+    const invite = await this.teacherInviteModel.findOne({
+      email: payload.email,
+      tokenHash,
+      usedAt: { $exists: false },
+    });
+    if (!invite) {
+      throw new UnauthorizedException('Invalid or already used invitation.');
+    }
+
+    if (invite.expiresAt.getTime() < Date.now()) {
+      throw new UnauthorizedException('Invitation has expired.');
+    }
+
+    const existingUser = await this.userModel.findOne({ email: payload.email }).lean();
+    if (existingUser) {
+      throw new ConflictException('A user already exists for this email.');
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const fullName = this.deriveFullNameFromEmail(payload.email);
+    await this.userModel.create({
+      fullName,
+      email: payload.email,
+      passwordHash,
+      role: 'teacher',
+      isActive: true,
+    });
+
+    invite.usedAt = new Date();
+    await invite.save();
+
+    return { message: 'Teacher account created successfully. You can now login.' };
   }
 
   private async issueSession(user: UserDocument, response: Response) {
@@ -360,6 +493,74 @@ export class AuthService {
       subject: 'UML Grader signup verification OTP',
       text: `Your OTP is ${otp}. It expires in ${expiresIn} minutes.`,
     });
+  }
+
+  private async sendTeacherInviteEmail(email: string, inviteLink: string) {
+    const host = this.configService.get<string>('SMTP_HOST');
+    const port = Number(this.configService.get<string>('SMTP_PORT') ?? '587');
+    const user = this.configService.get<string>('SMTP_USER');
+    const pass = this.configService.get<string>('SMTP_PASS');
+    const from = this.configService.get<string>('SMTP_FROM') ?? user;
+
+    if (!host || !user || !pass || !from) {
+      throw new InternalServerErrorException(
+        'SMTP configuration is missing. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM.',
+      );
+    }
+
+    const transporter = nodemailer.createTransport({
+      host,
+      port,
+      secure: port === 465,
+      auth: { user, pass },
+    });
+
+    await transporter.sendMail({
+      from,
+      to: email,
+      subject: 'UML Grader teacher invitation',
+      text: `You were invited as a teacher. Complete signup here: ${inviteLink}`,
+    });
+  }
+
+  private async createTeacherInviteToken(email: string): Promise<string> {
+    const secret = this.getRequiredEnv('JWT_TEACHER_INVITE_SECRET');
+    return this.jwtService.signAsync(
+      {
+        email,
+        type: 'teacher-invite',
+      } satisfies TeacherInvitePayload,
+      { secret, expiresIn: '3d' },
+    );
+  }
+
+  private async verifyTeacherInviteToken(
+    token: string,
+  ): Promise<TeacherInvitePayload> {
+    const secret = this.getRequiredEnv('JWT_TEACHER_INVITE_SECRET');
+    try {
+      const payload = await this.jwtService.verifyAsync<TeacherInvitePayload>(
+        token,
+        { secret },
+      );
+      if (payload.type !== 'teacher-invite' || !payload.email) {
+        throw new UnauthorizedException('Invalid invitation payload.');
+      }
+      return payload;
+    } catch {
+      throw new UnauthorizedException('Invalid or expired invitation token.');
+    }
+  }
+
+  private getTeacherInviteBaseUrl(): string {
+    return (
+      this.configService.get<string>('TEACHER_INVITE_BASE_URL') ??
+      'http://localhost:3000/teacher/signup'
+    );
+  }
+
+  private isValidEmail(email: string): boolean {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   }
 
   private minutesToMs(minutes: number): number {

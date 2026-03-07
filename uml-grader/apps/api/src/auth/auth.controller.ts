@@ -1,7 +1,16 @@
-import { Body, Controller, Get, Post, Req, Res } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Post,
+  Req,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { Public } from './decorators/public.decorator';
+import { SuperadminGuard } from './guards/superadmin.guard';
 
 interface SignupRequestBody {
   email: string;
@@ -16,6 +25,21 @@ interface VerifySignupBody {
 interface LoginRequestBody {
   email: string;
   password: string;
+}
+
+interface SuperadminLoginBody {
+  email: string;
+  password: string;
+}
+
+interface InviteTeachersBody {
+  emails: string[];
+}
+
+interface AcceptTeacherInviteBody {
+  token: string;
+  password: string;
+  confirmPassword: string;
 }
 
 @Controller('auth')
@@ -66,5 +90,28 @@ export class AuthController {
   @Get('me')
   me(@Req() request: Request & { user?: unknown }) {
     return this.authService.me(request);
+  }
+
+  @Public()
+  @Post('superadmin/login')
+  superadminLogin(@Body() body: SuperadminLoginBody) {
+    return this.authService.superadminLogin(body.email, body.password);
+  }
+
+  @Public()
+  @UseGuards(SuperadminGuard)
+  @Post('superadmin/invite-teachers')
+  inviteTeachers(@Body() body: InviteTeachersBody) {
+    return this.authService.inviteTeachers(body.emails);
+  }
+
+  @Public()
+  @Post('teacher/accept-invite')
+  acceptTeacherInvite(@Body() body: AcceptTeacherInviteBody) {
+    return this.authService.acceptTeacherInvite(
+      body.token,
+      body.password,
+      body.confirmPassword,
+    );
   }
 }

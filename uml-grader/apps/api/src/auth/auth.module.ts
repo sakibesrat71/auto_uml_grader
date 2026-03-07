@@ -7,10 +7,15 @@ import { User, UserSchema } from '../schemas/entities.schema';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { SuperadminGuard } from './guards/superadmin.guard';
 import {
   SignupVerification,
   SignupVerificationSchema,
 } from './schemas/signup-verification.schema';
+import {
+  TeacherInvite,
+  TeacherInviteSchema,
+} from './schemas/teacher-invite.schema';
 import { JwtStrategy } from './strategies/jwt.strategy';
 
 @Module({
@@ -30,12 +35,14 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     MongooseModule.forFeature([
       { name: User.name, schema: UserSchema },
       { name: SignupVerification.name, schema: SignupVerificationSchema },
+      { name: TeacherInvite.name, schema: TeacherInviteSchema },
     ]),
   ],
   controllers: [AuthController],
   providers: [
     AuthService,
     JwtStrategy,
+    SuperadminGuard,
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
