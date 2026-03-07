@@ -112,6 +112,42 @@ export class AuthService {
     return { message: 'Signup completed successfully.' };
   }
 
+  async login(email: string, password: string) {
+    const normalizedEmail = this.normalizeEmail(email);
+    if (!normalizedEmail || !password) {
+      throw new BadRequestException('Email and password are required.');
+    }
+
+    const user = await this.userModel.findOne({ email: normalizedEmail });
+    if (!user) {
+      throw new UnauthorizedException('Invalid email or password.');
+    }
+
+    if (!user.isActive) {
+      throw new UnauthorizedException('Your account is inactive.');
+    }
+
+    const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
+    if (!isPasswordValid) {
+      throw new UnauthorizedException('Invalid email or password.');
+    }
+
+    user.lastLoginAt = new Date();
+    await user.save();
+
+    return {
+      message: 'Login successful.',
+      user: {
+        id: user._id,
+        fullName: user.fullName,
+        email: user.email,
+        role: user.role,
+        isActive: user.isActive,
+        lastLoginAt: user.lastLoginAt,
+      },
+    };
+  }
+
   private normalizeEmail(email: string): string {
     return email?.trim().toLowerCase();
   }
