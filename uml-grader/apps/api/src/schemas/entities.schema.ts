@@ -42,6 +42,12 @@ export class User {
   @Prop()
   lastLoginAt?: Date;
 
+  @Prop()
+  refreshTokenHash?: string;
+
+  @Prop()
+  refreshTokenExpiresAt?: Date;
+
   createdAt!: Date;
   updatedAt!: Date;
 }
