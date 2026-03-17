@@ -5,6 +5,7 @@ import { resolve } from 'path';
 import { AuthModule } from './auth/auth.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { StudentModule } from './student/student.module';
 import { TeacherDashboardModule } from './teacher-dashboard/teacher-dashboard.module';
 
 @Module({
@@ -22,6 +23,7 @@ import { TeacherDashboardModule } from './teacher-dashboard/teacher-dashboard.mo
       process.env.MONGODB_URI ?? 'mongodb://127.0.0.1:27017/auto_uml_grader',
     ),
     AuthModule,
+    StudentModule,
     TeacherDashboardModule,
   ],
   controllers: [AppController],

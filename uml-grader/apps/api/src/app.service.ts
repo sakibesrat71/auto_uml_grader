@@ -4,7 +4,9 @@ import { Connection } from 'mongoose';
 
 @Injectable()
 export class AppService {
-  constructor(@InjectConnection() private readonly mongoConnection: Connection) {}
+  constructor(
+    @InjectConnection() private readonly mongoConnection: Connection,
+  ) {}
 
   getHello(): string {
     return 'Hello World!';

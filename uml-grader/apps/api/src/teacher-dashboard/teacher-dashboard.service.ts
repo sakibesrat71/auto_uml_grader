@@ -55,16 +55,22 @@ export class TeacherDashboardService {
       };
     }
 
-    const [totalAssignments, totalSubmissions, flaggedSubmissionIds, processingCount] =
-      await Promise.all([
-        this.assignmentModel.countDocuments({ teacherId }),
-        this.submissionModel.countDocuments({ assignmentId: { $in: assignmentIds } }),
-        this.getFlaggedSubmissionIdSet(assignmentIds),
-        this.submissionModel.countDocuments({
-          assignmentId: { $in: assignmentIds },
-          status: { $in: ['queued', 'processing'] },
-        }),
-      ]);
+    const [
+      totalAssignments,
+      totalSubmissions,
+      flaggedSubmissionIds,
+      processingCount,
+    ] = await Promise.all([
+      this.assignmentModel.countDocuments({ teacherId }),
+      this.submissionModel.countDocuments({
+        assignmentId: { $in: assignmentIds },
+      }),
+      this.getFlaggedSubmissionIdSet(assignmentIds),
+      this.submissionModel.countDocuments({
+        assignmentId: { $in: assignmentIds },
+        status: { $in: ['queued', 'processing'] },
+      }),
+    ]);
 
     return {
       totalAssignments,
@@ -88,14 +94,15 @@ export class TeacherDashboardService {
     const rows = await Promise.all(
       assignments.map(async (assignment) => {
         const assignmentId = assignment._id;
-        const [submissionsTotal, gradedCount, flaggedSubmissionIds] = await Promise.all([
-          this.submissionModel.countDocuments({ assignmentId }),
-          this.submissionModel.countDocuments({
-            assignmentId,
-            latestGradeId: { $exists: true, $ne: null },
-          }),
-          this.getFlaggedSubmissionIdSet([assignmentId]),
-        ]);
+        const [submissionsTotal, gradedCount, flaggedSubmissionIds] =
+          await Promise.all([
+            this.submissionModel.countDocuments({ assignmentId }),
+            this.submissionModel.countDocuments({
+              assignmentId,
+              latestGradeId: { $exists: true, $ne: null },
+            }),
+            this.getFlaggedSubmissionIdSet([assignmentId]),
+          ]);
 
         return {
           assignmentId: assignment._id,
@@ -108,13 +115,11 @@ export class TeacherDashboardService {
           submissionsTotal,
           gradedCount,
           needsReviewCount: flaggedSubmissionIds.size,
-          status: this.getAssignmentStatus(assignment.isPublished, assignment.dueAt),
-          actions: [
-            'View',
-            'Edit',
-            'Upload solutions',
-            'Release grades',
-          ],
+          status: this.getAssignmentStatus(
+            assignment.isPublished,
+            assignment.dueAt,
+          ),
+          actions: ['View', 'Edit', 'Upload solutions', 'Release grades'],
         };
       }),
     );
@@ -154,8 +159,12 @@ export class TeacherDashboardService {
       .limit(cappedLimit)
       .lean();
 
-    const assignmentIdSet = new Set(submissions.map((item) => item.assignmentId.toString()));
-    const studentIdSet = new Set(submissions.map((item) => item.studentId.toString()));
+    const assignmentIdSet = new Set(
+      submissions.map((item) => item.assignmentId.toString()),
+    );
+    const studentIdSet = new Set(
+      submissions.map((item) => item.studentId.toString()),
+    );
     const gradeIdSet = new Set(
       submissions
         .map((item) => item.latestGradeId?.toString())
@@ -241,7 +250,10 @@ export class TeacherDashboardService {
   }
 
   private async getTeacherAssignmentIds(teacherId: Types.ObjectId) {
-    const assignments = await this.assignmentModel.find({ teacherId }).select('_id').lean();
+    const assignments = await this.assignmentModel
+      .find({ teacherId })
+      .select('_id')
+      .lean();
     return assignments.map((item) => item._id);
   }
 
@@ -287,7 +299,9 @@ export class TeacherDashboardService {
       .find({ _id: { $in: assignmentIds } })
       .select({ _id: 1, title: 1 })
       .lean();
-    return new Map(assignments.map((item) => [item._id.toString(), item.title]));
+    return new Map(
+      assignments.map((item) => [item._id.toString(), item.title]),
+    );
   }
 
   private async getStudentMap(studentIds: string[]) {
@@ -298,15 +312,19 @@ export class TeacherDashboardService {
       .find({ _id: { $in: studentIds } })
       .select({ _id: 1, fullName: 1 })
       .lean();
-    return new Map(students.map((item) => [item._id.toString(), item.fullName]));
+    return new Map(
+      students.map((item) => [item._id.toString(), item.fullName]),
+    );
   }
 
   private async getGradeMap(gradeIds: string[]) {
     if (gradeIds.length === 0) {
       return new Map<string, GradeDocument>();
     }
-    const grades = await this.gradeModel.find({ _id: { $in: gradeIds } }).lean();
-    return new Map(grades.map((grade) => [grade._id.toString(), grade as GradeDocument]));
+    const grades = await this.gradeModel
+      .find({ _id: { $in: gradeIds } })
+      .lean();
+    return new Map(grades.map((grade) => [grade._id.toString(), grade]));
   }
 
   private pickNeedsReviewReason(

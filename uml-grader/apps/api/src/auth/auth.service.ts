@@ -24,7 +24,10 @@ import {
   SignupVerification,
   SignupVerificationDocument,
 } from './schemas/signup-verification.schema';
-import { TeacherInvite, TeacherInviteDocument } from './schemas/teacher-invite.schema';
+import {
+  TeacherInvite,
+  TeacherInviteDocument,
+} from './schemas/teacher-invite.schema';
 
 interface JwtPayload {
   sub: string;
@@ -36,6 +39,8 @@ interface TeacherInvitePayload {
   email: string;
   type: 'teacher-invite';
 }
+
+type LoginRole = 'student' | 'teacher';
 
 @Injectable()
 export class AuthService {
@@ -113,7 +118,9 @@ export class AuthService {
       throw new UnauthorizedException('Invalid OTP.');
     }
 
-    const existingUser = await this.userModel.findOne({ email: normalizedEmail });
+    const existingUser = await this.userModel.findOne({
+      email: normalizedEmail,
+    });
     if (existingUser) {
       await this.signupVerificationModel.deleteOne({ _id: pendingSignup._id });
       throw new ConflictException('An account already exists for this email.');
@@ -134,10 +141,19 @@ export class AuthService {
     return { message: 'Signup completed successfully.', user: safeUser };
   }
 
-  async login(email: string, password: string, response: Response) {
+  async login(
+    email: string,
+    password: string,
+    role: LoginRole | undefined,
+    response: Response,
+  ) {
     const normalizedEmail = this.normalizeEmail(email);
     if (!normalizedEmail || !password) {
       throw new BadRequestException('Email and password are required.');
+    }
+
+    if (role && !['student', 'teacher'].includes(role)) {
+      throw new BadRequestException('role must be student or teacher.');
     }
 
     const user = await this.userModel.findOne({ email: normalizedEmail });
@@ -152,6 +168,12 @@ export class AuthService {
     const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
     if (!isPasswordValid) {
       throw new UnauthorizedException('Invalid email or password.');
+    }
+
+    if (role && user.role !== role) {
+      throw new UnauthorizedException(
+        `This account does not have ${role} access. Please use the ${user.role} login.`,
+      );
     }
 
     user.lastLoginAt = new Date();
@@ -182,7 +204,10 @@ export class AuthService {
     return { message: 'Session refreshed.', user: safeUser };
   }
 
-  async logout(request: Request & { user?: { id?: string } }, response: Response) {
+  async logout(
+    request: Request & { user?: { id?: string } },
+    response: Response,
+  ) {
     const userId = request.user?.id;
     if (userId) {
       await this.userModel.updateOne(
@@ -236,7 +261,9 @@ export class AuthService {
       throw new BadRequestException('emails must be a non-empty array.');
     }
 
-    const uniqueEmails = [...new Set(emails.map((item) => this.normalizeEmail(item)))];
+    const uniqueEmails = [
+      ...new Set(emails.map((item) => this.normalizeEmail(item))),
+    ];
     const invited: string[] = [];
     const skipped: { email: string; reason: string }[] = [];
 
@@ -305,7 +332,9 @@ export class AuthService {
       throw new UnauthorizedException('Invitation has expired.');
     }
 
-    const existingUser = await this.userModel.findOne({ email: payload.email }).lean();
+    const existingUser = await this.userModel
+      .findOne({ email: payload.email })
+      .lean();
     if (existingUser) {
       throw new ConflictException('A user already exists for this email.');
     }
@@ -323,7 +352,9 @@ export class AuthService {
     invite.usedAt = new Date();
     await invite.save();
 
-    return { message: 'Teacher account created successfully. You can now login.' };
+    return {
+      message: 'Teacher account created successfully. You can now login.',
+    };
   }
 
   private async issueSession(user: UserDocument, response: Response) {

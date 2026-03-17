@@ -25,6 +25,7 @@ interface VerifySignupBody {
 interface LoginRequestBody {
   email: string;
   password: string;
+  role?: 'student' | 'teacher';
 }
 
 interface SuperadminLoginBody {
@@ -67,7 +68,7 @@ export class AuthController {
     @Body() body: LoginRequestBody,
     @Res({ passthrough: true }) response: Response,
   ) {
-    return this.authService.login(body.email, body.password, response);
+    return this.authService.login(body.email, body.password, body.role, response);
   }
 
   @Public()

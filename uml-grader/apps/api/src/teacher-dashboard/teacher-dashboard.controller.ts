@@ -13,7 +13,9 @@ interface AuthenticatedRequest extends Request {
 
 @Controller('teacher/dashboard')
 export class TeacherDashboardController {
-  constructor(private readonly teacherDashboardService: TeacherDashboardService) {}
+  constructor(
+    private readonly teacherDashboardService: TeacherDashboardService,
+  ) {}
 
   @Get('quick-stats')
   quickStats(@Req() request: AuthenticatedRequest) {

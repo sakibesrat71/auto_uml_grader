@@ -1,0 +1,40 @@
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[NestFactory] [39m[32mStarting Nest application...[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mMongooseModule dependencies initialized[39m[38;5;3m +46ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mConfigHostModule dependencies initialized[39m[38;5;3m +11ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mConfigModule dependencies initialized[39m[38;5;3m +2ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mJwtModule dependencies initialized[39m[38;5;3m +1ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mMongooseCoreModule dependencies initialized[39m[38;5;3m +37ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mMongooseModule dependencies initialized[39m[38;5;3m +5ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mMongooseModule dependencies initialized[39m[38;5;3m +1ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mMongooseModule dependencies initialized[39m[38;5;3m +1ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mAppModule dependencies initialized[39m[38;5;3m +1ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mStudentModule dependencies initialized[39m[38;5;3m +1ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mTeacherDashboardModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[InstanceLoader] [39m[32mAuthModule dependencies initialized[39m[38;5;3m +0ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mAppController {/}:[39m[38;5;3m +5ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/, GET} route[39m[38;5;3m +3ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/health, GET} route[39m[38;5;3m +2ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mAuthController {/auth}:[39m[38;5;3m +1ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/signup, POST} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/signup/verify, POST} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/login, POST} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/refresh, POST} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/logout, POST} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/me, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/superadmin/login, POST} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/superadmin/invite-teachers, POST} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/auth/teacher/accept-invite, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mStudentController {/student}:[39m[38;5;3m +1ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/student/dashboard/summary, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/student/assignments, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/student/grades/recent, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/student/assignments/:assignmentId, GET} route[39m[38;5;3m +2ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/student/assignments/:assignmentId/submissions, POST} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/student/submissions/:submissionId, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[RoutesResolver] [39m[32mTeacherDashboardController {/teacher/dashboard}:[39m[38;5;3m +0ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/teacher/dashboard/quick-stats, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/teacher/dashboard/assignments, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/teacher/dashboard/action-shortcuts, GET} route[39m[38;5;3m +0ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/teacher/dashboard/needs-review-queue, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[RouterExplorer] [39m[32mMapped {/teacher/dashboard/recent-activity, GET} route[39m[38;5;3m +1ms[39m
+[32m[Nest] 27216  - [39m03/17/2026, 9:58:53 AM [32m    LOG[39m [38;5;3m[NestApplication] [39m[32mNest application successfully started[39m[38;5;3m +3ms[39m

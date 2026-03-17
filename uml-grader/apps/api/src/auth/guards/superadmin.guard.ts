@@ -37,10 +37,12 @@ export class SuperadminGuard implements CanActivate {
     }
 
     try {
-      const payload =
-        await this.jwtService.verifyAsync<SuperadminJwtPayload>(token, {
+      const payload = await this.jwtService.verifyAsync<SuperadminJwtPayload>(
+        token,
+        {
           secret,
-        });
+        },
+      );
       if (payload.role !== 'superadmin' || payload.sub !== 'superadmin') {
         throw new UnauthorizedException('Invalid superadmin token.');
       }

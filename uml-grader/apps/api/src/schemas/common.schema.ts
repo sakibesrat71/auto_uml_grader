@@ -120,7 +120,8 @@ export class ExtractionMeta {
   extractedAt?: Date;
 }
 
-export const ExtractionMetaSchema = SchemaFactory.createForClass(ExtractionMeta);
+export const ExtractionMetaSchema =
+  SchemaFactory.createForClass(ExtractionMeta);
 
 @Schema({ _id: false })
 export class ExtractedUmlJson {
