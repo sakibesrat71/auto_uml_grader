@@ -288,7 +288,7 @@ export class TeacherDashboardService {
     if (dueAt && dueAt.getTime() < Date.now()) {
       return 'Closed';
     }
-    return 'Published';
+    return 'Open';
   }
 
   private async getAssignmentMap(assignmentIds: string[]) {

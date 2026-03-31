@@ -1,8 +1,11 @@
 import {
   Body,
   Controller,
+  Delete,
+  Get,
   Param,
   ParseFilePipeBuilder,
+  Patch,
   Post,
   Req,
   UploadedFile,
@@ -37,6 +40,11 @@ interface UploadSolutionBody {
   extractionStatus?: string;
 }
 
+interface OverrideSubmissionGradeBody {
+  finalScore: number;
+  comment?: string;
+}
+
 interface UploadedSolutionFile {
   originalname: string;
   mimetype: string;
@@ -58,6 +66,39 @@ export class TeacherAssignmentsController {
     return this.teacherAssignmentsService.createAssignment(request.user, body);
   }
 
+  @Get(':assignmentId')
+  getAssignmentDetail(
+    @Req() request: AuthenticatedRequest,
+    @Param('assignmentId') assignmentId: string,
+  ) {
+    return this.teacherAssignmentsService.getAssignmentDetail(
+      request.user,
+      assignmentId,
+    );
+  }
+
+  @Patch(':assignmentId/close')
+  closeAssignment(
+    @Req() request: AuthenticatedRequest,
+    @Param('assignmentId') assignmentId: string,
+  ) {
+    return this.teacherAssignmentsService.closeAssignment(
+      request.user,
+      assignmentId,
+    );
+  }
+
+  @Delete(':assignmentId')
+  deleteAssignment(
+    @Req() request: AuthenticatedRequest,
+    @Param('assignmentId') assignmentId: string,
+  ) {
+    return this.teacherAssignmentsService.deleteAssignment(
+      request.user,
+      assignmentId,
+    );
+  }
+
   @Post(':assignmentId/solutions')
   @UseInterceptors(
     FileInterceptor('file', {
@@ -72,8 +113,7 @@ export class TeacherAssignmentsController {
     @UploadedFile(
       new ParseFilePipeBuilder()
         .addFileTypeValidator({
-          fileType:
-            /(png|jpg|jpeg|xml)$/i,
+          fileType: /(png|jpg|jpeg|xml)$/i,
         })
         .build({
           fileIsRequired: true,
@@ -87,6 +127,67 @@ export class TeacherAssignmentsController {
       assignmentId,
       body,
       file,
+    );
+  }
+
+  @Patch(':assignmentId/solutions/:solutionId')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 10 * 1024 * 1024 },
+    }),
+  )
+  replaceSolution(
+    @Req() request: AuthenticatedRequest,
+    @Param('assignmentId') assignmentId: string,
+    @Param('solutionId') solutionId: string,
+    @Body() body: UploadSolutionBody,
+    @UploadedFile(
+      new ParseFilePipeBuilder()
+        .addFileTypeValidator({
+          fileType: /(png|jpg|jpeg|xml)$/i,
+        })
+        .build({
+          fileIsRequired: true,
+          errorHttpStatusCode: 400,
+        }),
+    )
+    file: UploadedSolutionFile,
+  ) {
+    return this.teacherAssignmentsService.replaceSolution(
+      request.user,
+      assignmentId,
+      solutionId,
+      body,
+      file,
+    );
+  }
+
+  @Delete(':assignmentId/solutions/:solutionId')
+  deleteSolution(
+    @Req() request: AuthenticatedRequest,
+    @Param('assignmentId') assignmentId: string,
+    @Param('solutionId') solutionId: string,
+  ) {
+    return this.teacherAssignmentsService.deleteSolution(
+      request.user,
+      assignmentId,
+      solutionId,
+    );
+  }
+
+  @Patch(':assignmentId/submissions/:submissionId/override')
+  overrideSubmissionGrade(
+    @Req() request: AuthenticatedRequest,
+    @Param('assignmentId') assignmentId: string,
+    @Param('submissionId') submissionId: string,
+    @Body() body: OverrideSubmissionGradeBody,
+  ) {
+    return this.teacherAssignmentsService.overrideSubmissionGrade(
+      request.user,
+      assignmentId,
+      submissionId,
+      body,
     );
   }
 }
