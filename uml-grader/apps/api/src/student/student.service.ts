@@ -44,6 +44,9 @@ export interface AssignmentWithLatest {
   dueAt: string | null;
   dueLabel: string;
   dueRelativeLabel: string;
+  isClosed: boolean;
+  isOverdue: boolean;
+  canSubmit: boolean;
   needsAction: boolean;
   canResubmit: boolean;
   submission: {
@@ -172,27 +175,89 @@ export class StudentService {
       throw new NotFoundException('Assignment not found.');
     }
 
-    const latestSubmission = await this.submissionModel
-      .findOne({ assignmentId: assignment._id, studentId })
-      .sort({ createdAt: -1, submittedAt: -1 });
-
+    const submissions = await this.submissionModel
+      .find({ assignmentId: assignment._id, studentId })
+      .sort({ createdAt: -1, submittedAt: -1 })
+      .lean();
+    const latestSubmission = submissions[0] ?? null;
+    const gradeIds = Array.from(
+      new Set(
+        submissions
+          .map((item) => item.latestGradeId?.toString())
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+    const gradeMap = await this.getGradeMap(gradeIds);
     const grade = latestSubmission?.latestGradeId
-      ? await this.gradeModel.findById(latestSubmission.latestGradeId).lean()
+      ? gradeMap.get(latestSubmission.latestGradeId.toString()) ?? null
       : null;
 
     const mappedStatus = this.mapSubmissionStatus(
       latestSubmission?.status,
       Boolean(grade),
     );
+    const isClosed = this.isAssignmentClosed(assignment.dueAt);
+    const canSubmitNow =
+      !isClosed && (mappedStatus === 'none' || mappedStatus === 'failed');
+    const attemptRows = submissions.map((submission, index) => {
+      const submissionGrade = submission.latestGradeId
+        ? gradeMap.get(submission.latestGradeId.toString())
+        : undefined;
+      const automaticScore = submissionGrade ? submissionGrade.score : null;
+      const finalScore =
+        submissionGrade?.teacherOverride?.isOverridden &&
+        typeof submissionGrade.teacherOverride.finalScore === 'number'
+          ? submissionGrade.teacherOverride.finalScore
+          : automaticScore;
+
+      return {
+        attemptNumber: submissions.length - index,
+        submissionId: submission._id.toString(),
+        submittedAt: (
+          submission.submittedAt ?? submission.createdAt
+        ).toISOString(),
+        status: this.mapSubmissionStatus(
+          submission.status,
+          Boolean(submissionGrade),
+        ),
+        autoMark: automaticScore,
+        finalMark: finalScore,
+        feedbackAvailable: Boolean(
+          submissionGrade?.discrepancies?.length ||
+            submissionGrade?.rubricBreakdown?.length ||
+            submissionGrade?.teacherOverride?.comment,
+        ),
+      };
+    });
+    const latestAutomaticMark = grade ? grade.score : null;
+    const bestMark = attemptRows
+      .map((item) => item.finalMark)
+      .filter((value): value is number => typeof value === 'number');
 
     return {
       assignmentId: assignment._id.toString(),
       title: assignment.title,
+      courseName: 'UML Grading',
       description: assignment.description ?? '',
+      instructions: [
+        'Submit a UML diagram image for automated grading against the reference solutions.',
+        'Make sure classes, attributes, methods, and relationships match the expected task.',
+      ],
+      requiredDiagramType: 'UML class diagram',
+      submissionFormatRules: ['PNG and JPEG only', 'One image per submission'],
+      namingGuidance:
+        'Use clear and consistent class, method, and attribute names to match the expected structure.',
+      markingNote:
+        'Your diagram will be automatically compared with reference UML solutions.',
       totalMarks: assignment.totalMarks,
       dueAt: assignment.dueAt?.toISOString() ?? null,
       dueLabel: this.formatDueLabel(assignment.dueAt),
       dueRelativeLabel: this.formatRelativeDueLabel(assignment.dueAt),
+      isClosed,
+      isOverdue: isClosed,
+      timeRemainingLabel: this.formatRelativeDueLabel(assignment.dueAt),
+      attemptRule:
+        'Single attempt unless grading fails and you are prompted to resubmit.',
       submission: latestSubmission
         ? {
             submissionId: latestSubmission._id.toString(),
@@ -217,10 +282,70 @@ export class StudentService {
             discrepancies: grade.discrepancies ?? [],
             flags: this.extractFlags(grade),
             updatedAt: (grade.updatedAt ?? grade.createdAt).toISOString(),
+            teacherFinalScore:
+              grade.teacherOverride?.isOverridden &&
+              typeof grade.teacherOverride.finalScore === 'number'
+                ? grade.teacherOverride.finalScore
+                : null,
+            teacherComment: grade.teacherOverride?.comment ?? null,
+            chosenSolutionLabel: grade.chosenSolutionLabel ?? null,
+            confidenceScore:
+              typeof latestSubmission?.extractedUmlJson?.extractionMeta
+                ?.confidence === 'number'
+                ? Number(
+                    (
+                      latestSubmission.extractedUmlJson.extractionMeta
+                        .confidence * 100
+                    ).toFixed(1),
+                  )
+                : null,
           }
         : null,
-      canSubmit: mappedStatus === 'none' || mappedStatus === 'failed',
+      canSubmit: canSubmitNow,
       canResubmit: mappedStatus === 'failed',
+      attemptsUsed: submissions.length,
+      attemptsRemaining: canSubmitNow ? 1 : 0,
+      attemptsHistory: attemptRows,
+      summary: {
+        currentStatus: this.formatStatusLabel(mappedStatus),
+        lastSubmissionTime: latestSubmission
+          ? (latestSubmission.submittedAt ?? latestSubmission.createdAt).toISOString()
+          : null,
+        bestMark: bestMark.length ? Math.max(...bestMark) : null,
+        latestMark: latestAutomaticMark,
+        finalMark:
+          grade?.teacherOverride?.isOverridden &&
+          typeof grade.teacherOverride.finalScore === 'number'
+            ? grade.teacherOverride.finalScore
+            : latestAutomaticMark,
+        finalMarkShown: Boolean(grade),
+        lateStatus: isClosed ? 'Closed / overdue' : 'On time',
+      },
+      latestResult: {
+        gradingStatus:
+          grade?.flags?.manualReviewRecommended || grade?.flags?.lowConfidence
+            ? 'Needs review'
+            : this.formatStatusLabel(mappedStatus),
+        automatedMark: latestAutomaticMark,
+        finalTeacherMark:
+          grade?.teacherOverride?.isOverridden &&
+          typeof grade.teacherOverride.finalScore === 'number'
+            ? grade.teacherOverride.finalScore
+            : null,
+        bestMatchedSolutionLabel: grade?.chosenSolutionLabel ?? 'Not available',
+        shortFeedbackSummary: this.buildShortFeedbackSummary(grade),
+        confidenceScore:
+          typeof latestSubmission?.extractedUmlJson?.extractionMeta
+            ?.confidence === 'number'
+            ? Number(
+                (
+                  latestSubmission.extractedUmlJson.extractionMeta.confidence *
+                  100
+                ).toFixed(1),
+              )
+            : null,
+      },
+      feedback: this.buildStudentFeedback(grade),
     };
   }
 
@@ -250,6 +375,12 @@ export class StudentService {
       latestSubmission?.status,
       Boolean(latestSubmission?.latestGradeId),
     );
+
+    if (this.isAssignmentClosed(assignment.dueAt)) {
+      throw new ForbiddenException(
+        'This assignment is closed and can no longer accept submissions.',
+      );
+    }
 
     if (latestStatus !== 'none' && latestStatus !== 'failed') {
       throw new ForbiddenException(
@@ -406,6 +537,11 @@ export class StudentService {
       dueAt: assignment.dueAt?.toISOString() ?? null,
       dueLabel: this.formatDueLabel(assignment.dueAt),
       dueRelativeLabel: this.formatRelativeDueLabel(assignment.dueAt),
+      isClosed: this.isAssignmentClosed(assignment.dueAt),
+      isOverdue: this.isAssignmentClosed(assignment.dueAt),
+      canSubmit:
+        !this.isAssignmentClosed(assignment.dueAt) &&
+        (status === 'none' || status === 'failed'),
       needsAction,
       canResubmit: status === 'failed',
       submission: {
@@ -510,6 +646,13 @@ export class StudentService {
     return hours >= 0 && hours <= 72;
   }
 
+  private isAssignmentClosed(dueAt: Date | undefined | null) {
+    if (!dueAt) {
+      return false;
+    }
+    return dueAt.getTime() < Date.now();
+  }
+
   private mapSubmissionStatus(
     rawStatus?: string,
     hasGrade?: boolean,
@@ -544,6 +687,91 @@ export class StudentService {
       flags.push('Recovered invalid JSON');
     }
     return [...flags, ...(grade.flags?.notes ?? [])];
+  }
+
+  private buildShortFeedbackSummary(grade?: GradeDocument | null) {
+    if (!grade) {
+      return 'Grading has not been completed yet.';
+    }
+
+    const discrepancies = grade.discrepancies ?? [];
+    if (discrepancies.length === 0) {
+      return 'Your latest diagram closely matches the expected reference structure.';
+    }
+
+    const missingCount = discrepancies.filter((item) =>
+      `${item.category} ${item.message}`.toLowerCase().includes('missing'),
+    ).length;
+    const relationshipCount = discrepancies.filter((item) =>
+      `${item.category} ${item.message}`.toLowerCase().includes('relationship'),
+    ).length;
+    const namingCount = discrepancies.filter((item) =>
+      `${item.category} ${item.message}`.toLowerCase().includes('name'),
+    ).length;
+
+    return [
+      missingCount ? `Missing ${missingCount} expected classes or members.` : null,
+      relationshipCount
+        ? `${relationshipCount} relationship differences were detected.`
+        : null,
+      namingCount ? `${namingCount} naming mismatches were found.` : null,
+    ]
+      .filter((value): value is string => Boolean(value))
+      .join(' ');
+  }
+
+  private buildStudentFeedback(grade?: GradeDocument | null) {
+    const discrepancies = grade?.discrepancies ?? [];
+    const missingComponents = discrepancies.filter((item) =>
+      `${item.category} ${item.message}`.toLowerCase().includes('missing'),
+    );
+    const incorrectRelationships = discrepancies.filter((item) =>
+      `${item.category} ${item.message}`.toLowerCase().includes('relationship'),
+    );
+    const namingIssues = discrepancies.filter((item) =>
+      `${item.category} ${item.message}`.toLowerCase().includes('name'),
+    );
+
+    return {
+      teacherFeedback: grade?.teacherOverride?.comment ?? null,
+      autoGeneratedFeedbackSummary: this.buildShortFeedbackSummary(grade),
+      strengthsDetected:
+        (grade?.rubricBreakdown ?? [])
+          .filter((item) => item.awardedMarks >= item.maxMarks && item.maxMarks > 0)
+          .map((item) => `${item.label} matched the expected structure`)
+          .slice(0, 3),
+      missingComponents: missingComponents.map((item) => item.message),
+      incorrectRelationships: incorrectRelationships.map((item) => item.message),
+      namingIssues: namingIssues.map((item) => item.message),
+      suggestions: [
+        missingComponents.length
+          ? `Missing ${missingComponents.length} expected classes or members.`
+          : 'Most expected classes and members were detected.',
+        incorrectRelationships.length
+          ? 'Some class relationships do not match the expected structure.'
+          : 'Relationships are mostly aligned with the expected structure.',
+        namingIssues.length
+          ? 'Several names differ from the expected diagram.'
+          : 'Naming is mostly aligned with the expected diagram.',
+      ],
+    };
+  }
+
+  private formatStatusLabel(status: StudentSubmissionStatus) {
+    switch (status) {
+      case 'none':
+        return 'Not submitted';
+      case 'submitted':
+        return 'Submitted';
+      case 'processing':
+        return 'Processing';
+      case 'graded':
+        return 'Graded';
+      case 'failed':
+        return 'Failed';
+      default:
+        return status;
+    }
   }
 
   private formatDueLabel(dueAt?: Date | null) {
