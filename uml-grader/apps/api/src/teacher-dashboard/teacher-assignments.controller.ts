@@ -31,6 +31,7 @@ interface CreateAssignmentBody {
   totalMarks: number;
   dueAt?: string | null;
   synonymsMap?: Record<string, string[]>;
+  assignedStudentEmails?: string[];
   solutionCount?: number;
   isPublished?: boolean;
 }

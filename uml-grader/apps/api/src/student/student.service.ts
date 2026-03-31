@@ -76,7 +76,7 @@ export class StudentService {
 
   async getDashboardSummary(user?: RequestUser) {
     const studentId = this.getStudentObjectId(user);
-    const assignmentViews = await this.getAssignmentViews(studentId);
+    const assignmentViews = await this.getAssignmentViews(studentId, user?.email);
     const now = Date.now();
 
     const nextDue = assignmentViews.find(
@@ -115,7 +115,7 @@ export class StudentService {
 
   async getAssignments(user?: RequestUser) {
     const studentId = this.getStudentObjectId(user);
-    return this.getAssignmentViews(studentId);
+    return this.getAssignmentViews(studentId, user?.email);
   }
 
   async getRecentGrades(user?: RequestUser, limit = 5) {
@@ -169,6 +169,7 @@ export class StudentService {
     const assignment = await this.assignmentModel.findOne({
       _id: this.toObjectId(assignmentId, 'assignmentId'),
       isPublished: true,
+      ...this.getAssignmentVisibilityFilter(user?.email),
     });
 
     if (!assignment) {
@@ -358,6 +359,7 @@ export class StudentService {
     const assignment = await this.assignmentModel.findOne({
       _id: this.toObjectId(assignmentId, 'assignmentId'),
       isPublished: true,
+      ...this.getAssignmentVisibilityFilter(user?.email),
     });
 
     if (!assignment) {
@@ -472,9 +474,13 @@ export class StudentService {
 
   private async getAssignmentViews(
     studentId: Types.ObjectId,
+    studentEmail?: string,
   ): Promise<AssignmentWithLatest[]> {
     const assignments = await this.assignmentModel
-      .find({ isPublished: true })
+      .find({
+        isPublished: true,
+        ...this.getAssignmentVisibilityFilter(studentEmail),
+      })
       .sort({ dueAt: 1, createdAt: -1 })
       .lean();
 
@@ -651,6 +657,23 @@ export class StudentService {
       return false;
     }
     return dueAt.getTime() < Date.now();
+  }
+
+  private getAssignmentVisibilityFilter(studentEmail?: string) {
+    const normalizedEmail = studentEmail?.trim().toLowerCase();
+    if (!normalizedEmail) {
+      return {
+        assignedStudentEmails: { $in: [] },
+      };
+    }
+
+    return {
+      $or: [
+        { assignedStudentEmails: { $exists: false } },
+        { assignedStudentEmails: { $size: 0 } },
+        { assignedStudentEmails: normalizedEmail },
+      ],
+    };
   }
 
   private mapSubmissionStatus(

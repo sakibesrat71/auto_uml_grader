@@ -79,6 +79,9 @@ export class Assignment {
   @Prop({ default: 0, min: 0 })
   solutionCount!: number;
 
+  @Prop({ type: [String], default: [] })
+  assignedStudentEmails!: string[];
+
   @Prop({ default: false })
   isPublished!: boolean;
 

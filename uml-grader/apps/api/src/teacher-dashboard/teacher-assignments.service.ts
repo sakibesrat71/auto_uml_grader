@@ -33,6 +33,7 @@ interface CreateAssignmentInput {
   totalMarks: number;
   dueAt?: string | null;
   synonymsMap?: Record<string, string[]>;
+  assignedStudentEmails?: string[];
   solutionCount?: number;
   isPublished?: boolean;
 }
@@ -100,6 +101,9 @@ export class TeacherAssignmentsService {
       totalMarks: input.totalMarks,
       dueAt: input.dueAt ? new Date(input.dueAt) : undefined,
       synonymsMap: this.normalizeSynonymsMap(input.synonymsMap),
+      assignedStudentEmails: this.normalizeAssignedStudentEmails(
+        input.assignedStudentEmails,
+      ),
       solutionCount: input.solutionCount ?? 0,
       isPublished: input.isPublished ?? false,
     });
@@ -135,6 +139,16 @@ export class TeacherAssignmentsService {
         .sort({ submittedAt: -1, createdAt: -1 })
         .lean(),
     ]);
+    const invitedEmails = assignment.assignedStudentEmails ?? [];
+    const registeredInvitedStudents = invitedEmails.length
+      ? await this.userModel
+          .find({ email: { $in: invitedEmails }, role: 'student' })
+          .select({ _id: 1, email: 1, fullName: 1, isActive: 1 })
+          .lean()
+      : [];
+    const registeredInviteMap = new Map(
+      registeredInvitedStudents.map((student) => [student.email, student]),
+    );
 
     const studentIds = Array.from(
       new Set(submissions.map((item) => item.studentId.toString())),
@@ -250,6 +264,20 @@ export class TeacherAssignmentsService {
           'Relationship, attribute, and method discrepancies feed teacher review.',
         ],
         allowedEquivalentNamesCount: equivalentNamesCount,
+      },
+      invitedStudents: {
+        totalInvited: invitedEmails.length,
+        registeredCount: registeredInvitedStudents.length,
+        pendingCount: invitedEmails.length - registeredInvitedStudents.length,
+        items: invitedEmails.map((email) => {
+          const matchedStudent = registeredInviteMap.get(email);
+          return {
+            email,
+            status: matchedStudent ? 'Registered' : 'Pending',
+            studentId: matchedStudent?._id?.toString() ?? null,
+            fullName: matchedStudent?.fullName ?? null,
+          };
+        }),
       },
       submissions: submissionRows,
       analytics,
@@ -541,6 +569,7 @@ export class TeacherAssignmentsService {
       totalMarks: assignment.totalMarks,
       dueAt: assignment.dueAt?.toISOString() ?? null,
       synonymsMap: Object.fromEntries(assignment.synonymsMap ?? []),
+      assignedStudentEmails: assignment.assignedStudentEmails ?? [],
       solutionCount: assignment.solutionCount,
       isPublished: assignment.isPublished,
       createdAt: assignment.createdAt.toISOString(),
@@ -1116,6 +1145,17 @@ export class TeacherAssignmentsService {
         }
       }
     }
+
+    if (input.assignedStudentEmails) {
+      for (const email of input.assignedStudentEmails) {
+        const normalized = email?.trim().toLowerCase();
+        if (!normalized || !this.isValidEmail(normalized)) {
+          throw new BadRequestException(
+            'assignedStudentEmails must contain valid email addresses.',
+          );
+        }
+      }
+    }
   }
 
   private normalizeSynonymsMap(input?: Record<string, string[]>) {
@@ -1129,6 +1169,18 @@ export class TeacherAssignmentsService {
         value.map((item) => item.trim()),
       ]),
     );
+  }
+
+  private normalizeAssignedStudentEmails(input?: string[]) {
+    if (!input || input.length === 0) {
+      return [];
+    }
+
+    return [...new Set(input.map((email) => email.trim().toLowerCase()))];
+  }
+
+  private isValidEmail(email: string) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   }
 
   private normalizeAndValidateSolutionMimeType(file: UploadedSolutionFile) {
