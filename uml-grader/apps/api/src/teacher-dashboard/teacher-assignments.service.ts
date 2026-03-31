@@ -2,11 +2,14 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import * as nodemailer from 'nodemailer';
 import {
   Assignment,
   AssignmentDocument,
@@ -74,6 +77,8 @@ type ActivityItem = {
 
 @Injectable()
 export class TeacherAssignmentsService {
+  private readonly logger = new Logger(TeacherAssignmentsService.name);
+
   constructor(
     @InjectModel(Assignment.name)
     private readonly assignmentModel: Model<AssignmentDocument>,
@@ -85,6 +90,7 @@ export class TeacherAssignmentsService {
     private readonly gradeModel: Model<GradeDocument>,
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
+    private readonly configService: ConfigService,
   ) {}
 
   async createAssignment(
@@ -93,6 +99,9 @@ export class TeacherAssignmentsService {
   ) {
     const teacherId = this.getTeacherObjectId(user);
     this.validateCreateAssignmentInput(input);
+    const assignedStudentEmails = this.normalizeAssignedStudentEmails(
+      input.assignedStudentEmails,
+    );
 
     const assignment = await this.assignmentModel.create({
       teacherId,
@@ -101,14 +110,29 @@ export class TeacherAssignmentsService {
       totalMarks: input.totalMarks,
       dueAt: input.dueAt ? new Date(input.dueAt) : undefined,
       synonymsMap: this.normalizeSynonymsMap(input.synonymsMap),
-      assignedStudentEmails: this.normalizeAssignedStudentEmails(
-        input.assignedStudentEmails,
-      ),
+      assignedStudentEmails,
       solutionCount: input.solutionCount ?? 0,
       isPublished: input.isPublished ?? false,
     });
 
-    return this.mapAssignmentResponse(assignment);
+    const emailNotifications =
+      assignedStudentEmails.length > 0
+        ? await this.sendAssignmentReminderEmails(
+            assignment,
+            assignedStudentEmails,
+            user,
+          )
+        : {
+            sentCount: 0,
+            failedCount: 0,
+            skippedCount: 0,
+            failures: [],
+          };
+
+    return {
+      ...this.mapAssignmentResponse(assignment),
+      emailNotifications,
+    };
   }
 
   async getAssignmentDetail(
@@ -1177,6 +1201,95 @@ export class TeacherAssignmentsService {
     }
 
     return [...new Set(input.map((email) => email.trim().toLowerCase()))];
+  }
+
+  private async sendAssignmentReminderEmails(
+    assignment: AssignmentDocument,
+    recipientEmails: string[],
+    user?: RequestUser,
+  ) {
+    const host = this.configService.get<string>('SMTP_HOST');
+    const port = Number(this.configService.get<string>('SMTP_PORT') ?? '587');
+    const smtpUser = this.configService.get<string>('SMTP_USER');
+    const smtpPass = this.configService.get<string>('SMTP_PASS');
+    const from = this.configService.get<string>('SMTP_FROM') ?? smtpUser;
+
+    if (!host || !smtpUser || !smtpPass || !from) {
+      const message =
+        'SMTP configuration is missing. Assignment reminders were skipped.';
+      this.logger.warn(message);
+      return {
+        sentCount: 0,
+        failedCount: 0,
+        skippedCount: recipientEmails.length,
+        failures: [],
+        message,
+      };
+    }
+
+    const transporter = nodemailer.createTransport({
+      host,
+      port,
+      secure: port === 465,
+      auth: { user: smtpUser, pass: smtpPass },
+    });
+
+    const dueDateText = assignment.dueAt
+      ? assignment.dueAt.toLocaleString('en-AU', {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+        })
+      : 'No due date set';
+    const teacherName = user?.fullName || user?.email || 'Your teacher';
+    const assignmentDescription =
+      assignment.description?.trim() || 'No description was provided.';
+
+    const results = await Promise.all(
+      recipientEmails.map(async (email) => {
+        try {
+          await transporter.sendMail({
+            from,
+            to: email,
+            subject: `New assignment: ${assignment.title}`,
+            text: [
+              `Hello,`,
+              ``,
+              `${teacherName} assigned you a new UML assignment.`,
+              ``,
+              `Title: ${assignment.title}`,
+              `Description: ${assignmentDescription}`,
+              `Total marks: ${assignment.totalMarks}`,
+              `Due date: ${dueDateText}`,
+              ``,
+              `Please log in to UML Grader to review the assignment and submit your work.`,
+            ].join('\n'),
+          });
+
+          return { email, success: true as const };
+        } catch (error) {
+          const reason =
+            error instanceof Error ? error.message : 'Unknown email error';
+          this.logger.warn(
+            `Failed to send assignment reminder to ${email}: ${reason}`,
+          );
+          return { email, success: false as const, reason };
+        }
+      }),
+    );
+
+    const failures = results
+      .filter((result) => !result.success)
+      .map((result) => ({
+        email: result.email,
+        reason: result.reason,
+      }));
+
+    return {
+      sentCount: results.length - failures.length,
+      failedCount: failures.length,
+      skippedCount: 0,
+      failures,
+    };
   }
 
   private isValidEmail(email: string) {
