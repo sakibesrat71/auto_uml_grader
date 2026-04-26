@@ -53,6 +53,8 @@ interface UploadedSolutionFile {
   buffer: Buffer;
 }
 
+const SOLUTION_UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
+
 @Controller('teacher/assignments')
 export class TeacherAssignmentsController {
   constructor(
@@ -104,7 +106,6 @@ export class TeacherAssignmentsController {
   @UseInterceptors(
     FileInterceptor('file', {
       storage: memoryStorage(),
-      limits: { fileSize: 10 * 1024 * 1024 },
     }),
   )
   uploadSolution(
@@ -113,8 +114,12 @@ export class TeacherAssignmentsController {
     @Body() body: UploadSolutionBody,
     @UploadedFile(
       new ParseFilePipeBuilder()
+        .addMaxSizeValidator({
+          maxSize: SOLUTION_UPLOAD_MAX_BYTES,
+          message: 'Solution files must be 10 MB or smaller.',
+        })
         .addFileTypeValidator({
-          fileType: /(png|jpg|jpeg|xml)$/i,
+          fileType: /(png|jpg|jpeg|xml|uxf)$/i,
         })
         .build({
           fileIsRequired: true,
@@ -135,7 +140,6 @@ export class TeacherAssignmentsController {
   @UseInterceptors(
     FileInterceptor('file', {
       storage: memoryStorage(),
-      limits: { fileSize: 10 * 1024 * 1024 },
     }),
   )
   replaceSolution(
@@ -145,8 +149,12 @@ export class TeacherAssignmentsController {
     @Body() body: UploadSolutionBody,
     @UploadedFile(
       new ParseFilePipeBuilder()
+        .addMaxSizeValidator({
+          maxSize: SOLUTION_UPLOAD_MAX_BYTES,
+          message: 'Solution files must be 10 MB or smaller.',
+        })
         .addFileTypeValidator({
-          fileType: /(png|jpg|jpeg|xml)$/i,
+          fileType: /(png|jpg|jpeg|xml|uxf)$/i,
         })
         .build({
           fileIsRequired: true,

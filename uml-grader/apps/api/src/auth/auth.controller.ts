@@ -68,7 +68,12 @@ export class AuthController {
     @Body() body: LoginRequestBody,
     @Res({ passthrough: true }) response: Response,
   ) {
-    return this.authService.login(body.email, body.password, body.role, response);
+    return this.authService.login(
+      body.email,
+      body.password,
+      body.role,
+      response,
+    );
   }
 
   @Public()

@@ -63,11 +63,7 @@ interface UploadedSolutionFile {
   buffer: Buffer;
 }
 
-type TeacherSubmissionStatus =
-  | 'submitted'
-  | 'processing'
-  | 'graded'
-  | 'failed';
+type TeacherSubmissionStatus = 'submitted' | 'processing' | 'graded' | 'failed';
 
 type ActivityItem = {
   type: string;
@@ -148,9 +144,7 @@ export class TeacherAssignmentsService {
       throw new NotFoundException('Assignment not found.');
     }
     if (assignment.teacherId.toString() !== teacherId.toString()) {
-      throw new ForbiddenException(
-        'You can only view your own assignments.',
-      );
+      throw new ForbiddenException('You can only view your own assignments.');
     }
 
     const [solutions, submissions] = await Promise.all([
@@ -452,10 +446,7 @@ export class TeacherAssignmentsService {
     };
   }
 
-  async closeAssignment(
-    user: RequestUser | undefined,
-    assignmentId: string,
-  ) {
+  async closeAssignment(user: RequestUser | undefined, assignmentId: string) {
     const teacherId = this.getTeacherObjectId(user);
     const assignment = await this.assignmentModel.findById(
       this.toObjectId(assignmentId, 'assignmentId'),
@@ -465,9 +456,7 @@ export class TeacherAssignmentsService {
       throw new NotFoundException('Assignment not found.');
     }
     if (assignment.teacherId.toString() !== teacherId.toString()) {
-      throw new ForbiddenException(
-        'You can only update your own assignments.',
-      );
+      throw new ForbiddenException('You can only update your own assignments.');
     }
 
     assignment.isPublished = true;
@@ -480,10 +469,7 @@ export class TeacherAssignmentsService {
     };
   }
 
-  async deleteAssignment(
-    user: RequestUser | undefined,
-    assignmentId: string,
-  ) {
+  async deleteAssignment(user: RequestUser | undefined, assignmentId: string) {
     const teacherId = this.getTeacherObjectId(user);
     const assignmentObjectId = this.toObjectId(assignmentId, 'assignmentId');
     const assignment = await this.assignmentModel.findById(assignmentObjectId);
@@ -492,9 +478,7 @@ export class TeacherAssignmentsService {
       throw new NotFoundException('Assignment not found.');
     }
     if (assignment.teacherId.toString() !== teacherId.toString()) {
-      throw new ForbiddenException(
-        'You can only delete your own assignments.',
-      );
+      throw new ForbiddenException('You can only delete your own assignments.');
     }
 
     await Promise.all([
@@ -887,7 +871,9 @@ export class TeacherAssignmentsService {
     }
 
     return activity
-      .sort((left, right) => right.occurredAt.getTime() - left.occurredAt.getTime())
+      .sort(
+        (left, right) => right.occurredAt.getTime() - left.occurredAt.getTime(),
+      )
       .slice(0, 20)
       .map((item) => ({
         type: item.type,
@@ -1016,17 +1002,14 @@ export class TeacherAssignmentsService {
     return grade.score;
   }
 
-  private isNeedsReview(
-    submission: SubmissionDocument,
-    grade?: GradeDocument,
-  ) {
+  private isNeedsReview(submission: SubmissionDocument, grade?: GradeDocument) {
     if (submission.extractionError) {
       return true;
     }
     return Boolean(
       grade?.flags?.lowConfidence ||
-        grade?.flags?.extractionIssues ||
-        grade?.flags?.manualReviewRecommended,
+      grade?.flags?.extractionIssues ||
+      grade?.flags?.manualReviewRecommended,
     );
   }
 
@@ -1306,6 +1289,7 @@ export class TeacherAssignmentsService {
       'image/jpg',
       'application/xml',
       'text/xml',
+      'application/uxf',
     ]);
 
     if (allowedMimeTypes.has(mimeType)) {
@@ -1316,8 +1300,12 @@ export class TeacherAssignmentsService {
       return 'application/xml';
     }
 
+    if (fileName.endsWith('.uxf')) {
+      return 'application/uxf';
+    }
+
     throw new BadRequestException(
-      'Solution files must be PNG, JPEG, or XML.',
+      'Solution files must be PNG, JPEG, XML, or UXF.',
     );
   }
 
