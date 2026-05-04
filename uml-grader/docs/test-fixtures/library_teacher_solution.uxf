@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<diagram program="umlet" version="15.1">
+  <zoom_level>10</zoom_level>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>20</x>
+      <y>40</y>
+      <w>190</w>
+      <h>150</h>
+    </coordinates>
+    <panel_attributes>Member
+--
+-memberId (PK)
+-fullName
+-email
+-status
+--
++borrowBook(bookId)
++returnBook(bookId)</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>290</x>
+      <y>40</y>
+      <w>190</w>
+      <h>150</h>
+    </coordinates>
+    <panel_attributes>Book
+--
+-bookId (PK)
+-title
+-isbn
+-availableCopies
+--
++markUnavailable()
++markAvailable()</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>560</x>
+      <y>40</y>
+      <w>200</w>
+      <h>150</h>
+    </coordinates>
+    <panel_attributes>Librarian
+--
+-employeeId (PK)
+-name
+-email
+--
++addBook(book)
++removeBook(bookId)</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>170</x>
+      <y>270</y>
+      <w>210</w>
+      <h>150</h>
+    </coordinates>
+    <panel_attributes>Loan
+--
+-loanId (PK)
+-borrowDate
+-dueDate
+-returnDate
+--
++isOverdue()</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>UMLClass</id>
+    <coordinates>
+      <x>470</x>
+      <y>270</y>
+      <w>210</w>
+      <h>140</h>
+    </coordinates>
+    <panel_attributes>Reservation
+--
+-reservationId (PK)
+-createdAt
+-expiresAt
+--
++cancel()</panel_attributes>
+    <additional_attributes/>
+  </element>
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>100</x>
+      <y>180</y>
+      <w>130</w>
+      <h>110</h>
+    </coordinates>
+    <panel_attributes>lt=-
+1
+0..*</panel_attributes>
+    <additional_attributes>10.0;10.0;110.0;90.0</additional_attributes>
+  </element>
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>340</x>
+      <y>180</y>
+      <w>40</w>
+      <h>110</h>
+    </coordinates>
+    <panel_attributes>lt=-
+1
+0..*</panel_attributes>
+    <additional_attributes>20.0;10.0;20.0;90.0</additional_attributes>
+  </element>
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>430</x>
+      <y>180</y>
+      <w>110</w>
+      <h>110</h>
+    </coordinates>
+    <panel_attributes>lt=-
+1
+0..*</panel_attributes>
+    <additional_attributes>10.0;10.0;90.0;90.0</additional_attributes>
+  </element>
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>610</x>
+      <y>180</y>
+      <w>40</w>
+      <h>110</h>
+    </coordinates>
+    <panel_attributes>lt=-
+1
+0..*</panel_attributes>
+    <additional_attributes>20.0;10.0;20.0;90.0</additional_attributes>
+  </element>
+  <element>
+    <id>Relation</id>
+    <coordinates>
+      <x>370</x>
+      <y>320</y>
+      <w>120</w>
+      <h>40</h>
+    </coordinates>
+    <panel_attributes>lt=-
+1
+0..*</panel_attributes>
+    <additional_attributes>10.0;20.0;100.0;20.0</additional_attributes>
+  </element>
+</diagram>

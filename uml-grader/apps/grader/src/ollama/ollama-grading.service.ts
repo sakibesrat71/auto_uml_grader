@@ -29,14 +29,35 @@ interface LlmGradePayload {
   notes: string[];
 }
 
+interface ScoreGuidance {
+  anchorScore: number;
+  minScore: number;
+  maxScore: number;
+}
+
 @Injectable()
 export class OllamaGradingService {
   constructor(private readonly configService: ConfigService) {}
 
   async grade(input: GradeWithOllamaInput): Promise<GradeResponse> {
     const payload = await this.generateGrade(input);
-    const score = this.clamp(this.round(payload.score), 0, input.maxScore);
+    const scoreGuidance = this.buildScoreGuidance(
+      input.comparison,
+      input.maxScore,
+    );
+    const rawScore = this.clamp(this.round(payload.score), 0, input.maxScore);
+    const score = this.clamp(
+      rawScore,
+      scoreGuidance.minScore,
+      scoreGuidance.maxScore,
+    );
     const confidence = this.clamp(payload.confidence, 0, 1);
+    const adjustmentNote =
+      score !== rawScore
+        ? [
+            `LLM score adjusted from ${rawScore}/${input.maxScore} to ${score}/${input.maxScore} using deterministic evidence guardrails.`,
+          ]
+        : [];
 
     return {
       score,
@@ -46,6 +67,7 @@ export class OllamaGradingService {
       rubricBreakdown: this.normalizeRubric(
         payload.rubricBreakdown,
         input.maxScore,
+        score,
       ),
       discrepancies: this.normalizeDiscrepancies(payload.discrepancies),
       flags: {
@@ -59,6 +81,8 @@ export class OllamaGradingService {
         notes: [
           `Ollama model: ${this.getModelName()}.`,
           `LLM confidence: ${this.round(confidence * 100)}%.`,
+          `Deterministic score anchor: ${scoreGuidance.anchorScore}/${input.maxScore}.`,
+          ...adjustmentNote,
           ...payload.notes.map((item) => item.trim()).filter(Boolean),
         ],
       },
@@ -171,8 +195,12 @@ export class OllamaGradingService {
         'UML correctness and clarity: 10%',
       ],
       teacherSynonymRule:
-        'Treat matched synonym names as acceptable unless the concept is materially different.',
+        'Treat matched synonym names as acceptable unless the concept is materially different. If classMatches contains a synonym pair, that pair is not a missing class or an extra class.',
       deterministicSummary: input.comparison.summary,
+      scoringGuardrails: this.buildScoreGuidance(
+        input.comparison,
+        input.maxScore,
+      ),
       deterministicDiscrepancies: input.deterministicDiscrepancies,
       solution: this.compactDiagram(input.comparison.solution),
       submission: this.compactDiagram(input.comparison.submission),
@@ -185,8 +213,12 @@ export class OllamaGradingService {
       outputRules: [
         'Return only JSON matching the schema.',
         `score must be between 0 and ${input.maxScore}.`,
-        'Use awardedMarks values that add up approximately to score.',
+        `Use exactly these rubric maxMarks when maxScore is ${input.maxScore}: Class coverage ${this.round(input.maxScore * 0.3)}, Attributes and methods ${this.round(input.maxScore * 0.2)}, Relationships ${this.round(input.maxScore * 0.3)}, Semantic equivalence ${this.round(input.maxScore * 0.1)}, UML correctness and clarity ${this.round(input.maxScore * 0.1)}.`,
+        'Use awardedMarks values that add up approximately to score and never exceed each criterion maxMarks.',
+        'Stay inside scoringGuardrails unless the diagram has a severe semantic issue not captured by deterministicDiscrepancies. Explain that issue in discrepancies if you go outside the guardrail.',
         'The discrepancies array must contain only actual problems. Return an empty discrepancies array when there are no problems.',
+        'Do not penalize class coverage for a solution class and submission class already listed together in classMatches, including synonym matches such as Customer and Client.',
+        'Do not mention a matched synonym pair as missing, extra, or unclear unless another concrete issue remains on that matched class.',
         'Be fair to semantically equivalent UML choices.',
         'Recommend manual review when evidence is ambiguous.',
       ],
@@ -291,18 +323,115 @@ export class OllamaGradingService {
   private normalizeRubric(
     rubric: RubricBreakdownItem[],
     maxScore: number,
+    targetScore: number,
   ): RubricBreakdownItem[] {
-    return rubric.map((item) => ({
-      criterionKey: String(item.criterionKey || 'unknown'),
-      label: String(item.label || item.criterionKey || 'Criterion'),
-      maxMarks: this.clamp(this.round(Number(item.maxMarks) || 0), 0, maxScore),
+    const criteria = [
+      {
+        criterionKey: 'class_coverage',
+        label: 'Class coverage',
+        maxMarks: maxScore * 0.3,
+        tokens: ['class'],
+      },
+      {
+        criterionKey: 'attributes_methods',
+        label: 'Attributes and methods',
+        maxMarks: maxScore * 0.2,
+        tokens: ['attribute', 'method'],
+      },
+      {
+        criterionKey: 'relationships',
+        label: 'Relationships',
+        maxMarks: maxScore * 0.3,
+        tokens: ['relationship'],
+      },
+      {
+        criterionKey: 'semantic_equivalence',
+        label: 'Semantic equivalence',
+        maxMarks: maxScore * 0.1,
+        tokens: ['semantic'],
+      },
+      {
+        criterionKey: 'uml_clarity',
+        label: 'UML correctness and clarity',
+        maxMarks: maxScore * 0.1,
+        tokens: ['clarity', 'correctness'],
+      },
+    ];
+
+    const normalized = criteria.map((criterion) => {
+      const source = this.findRubricItem(rubric, criterion.tokens);
+      const sourceMax = Number(source?.maxMarks);
+      const sourceAwarded = Number(source?.awardedMarks);
+      const awardedFromRatio =
+        Number.isFinite(sourceMax) &&
+        sourceMax > 0 &&
+        sourceMax !== criterion.maxMarks
+          ? (sourceAwarded / sourceMax) * criterion.maxMarks
+          : sourceAwarded;
+
+      return {
+        criterionKey: criterion.criterionKey,
+        label: criterion.label,
+        maxMarks: this.round(criterion.maxMarks),
+        awardedMarks: this.clamp(
+          this.round(Number.isFinite(awardedFromRatio) ? awardedFromRatio : 0),
+          0,
+          criterion.maxMarks,
+        ),
+        reason: source?.reason ? String(source.reason) : undefined,
+      };
+    });
+
+    return this.scaleRubricToScore(normalized, targetScore);
+  }
+
+  private findRubricItem(rubric: RubricBreakdownItem[], tokens: string[]) {
+    return rubric.find((item) => {
+      const text =
+        `${item.criterionKey ?? ''} ${item.label ?? ''}`.toLowerCase();
+      return tokens.some((token) => text.includes(token));
+    });
+  }
+
+  private scaleRubricToScore(
+    rubric: RubricBreakdownItem[],
+    targetScore: number,
+  ) {
+    const currentTotal = rubric.reduce(
+      (sum, item) => sum + item.awardedMarks,
+      0,
+    );
+    if (currentTotal <= 0) {
+      return rubric;
+    }
+
+    const scaled = rubric.map((item) => ({
+      ...item,
       awardedMarks: this.clamp(
-        this.round(Number(item.awardedMarks) || 0),
+        this.round(item.awardedMarks * (targetScore / currentTotal)),
         0,
-        maxScore,
+        item.maxMarks,
       ),
-      reason: item.reason ? String(item.reason) : undefined,
     }));
+    const scaledTotal = scaled.reduce(
+      (sum, item) => sum + item.awardedMarks,
+      0,
+    );
+    const delta = this.round(targetScore - scaledTotal);
+    const adjustable = scaled
+      .slice()
+      .reverse()
+      .find(
+        (item) =>
+          item.awardedMarks + delta >= 0 &&
+          item.awardedMarks + delta <= item.maxMarks,
+      );
+
+    if (adjustable) {
+      adjustable.awardedMarks = this.round(adjustable.awardedMarks + delta);
+    }
+
+    return scaled;
   }
 
   private normalizeDiscrepancies(
@@ -339,6 +468,100 @@ export class OllamaGradingService {
       return value;
     }
     return 'major';
+  }
+
+  private buildScoreGuidance(
+    comparison: DiagramComparison,
+    maxScore: number,
+  ): ScoreGuidance {
+    const classScore =
+      maxScore *
+      0.3 *
+      this.ratio(
+        comparison.summary.matchedClassCount,
+        comparison.summary.solutionClassCount,
+      );
+    const expectedMembers =
+      comparison.summary.attributeMatchCount +
+      comparison.summary.missingAttributeCount +
+      comparison.summary.methodMatchCount +
+      comparison.summary.missingMethodCount;
+    const matchedMembers =
+      comparison.summary.attributeMatchCount +
+      comparison.summary.methodMatchCount;
+    const memberScore =
+      maxScore * 0.2 * this.ratio(matchedMembers, expectedMembers);
+    const relationshipScore =
+      maxScore * 0.3 * this.relationshipQualityRatio(comparison);
+    const semanticScore =
+      maxScore *
+      0.1 *
+      (comparison.summary.extraClassCount > 0 ||
+      comparison.summary.extraRelationshipCount > 0
+        ? 0.6
+        : 1);
+    const clarityScore =
+      maxScore *
+      0.1 *
+      (comparison.submission.metadata.unlinkedRelationshipCount > 0
+        ? 0.5
+        : this.hasRelationshipTypeMismatch(comparison)
+          ? 0.75
+          : 1);
+    const anchorScore = this.round(
+      classScore +
+        memberScore +
+        relationshipScore +
+        semanticScore +
+        clarityScore,
+    );
+
+    return {
+      anchorScore,
+      minScore: this.clamp(
+        this.round(anchorScore - maxScore * 0.1),
+        0,
+        maxScore,
+      ),
+      maxScore: this.clamp(
+        this.round(anchorScore + maxScore * 0.1),
+        0,
+        maxScore,
+      ),
+    };
+  }
+
+  private relationshipQualityRatio(comparison: DiagramComparison) {
+    const solutionCount = comparison.summary.solutionRelationshipCount;
+    if (solutionCount <= 0) {
+      return 1;
+    }
+
+    const exactMatches = comparison.relationshipMatches.filter(
+      (item) => item.matchType === 'exact',
+    ).length;
+    const typeMismatchMatches = comparison.relationshipMatches.filter(
+      (item) => item.matchType === 'type-mismatch',
+    ).length;
+
+    return this.clamp(
+      (exactMatches + typeMismatchMatches * 0.4) / solutionCount,
+      0,
+      1,
+    );
+  }
+
+  private hasRelationshipTypeMismatch(comparison: DiagramComparison) {
+    return comparison.relationshipMatches.some(
+      (item) => item.matchType === 'type-mismatch',
+    );
+  }
+
+  private ratio(numerator: number, denominator: number) {
+    if (denominator <= 0) {
+      return 1;
+    }
+    return this.clamp(numerator / denominator, 0, 1);
   }
 
   private getBaseUrl() {

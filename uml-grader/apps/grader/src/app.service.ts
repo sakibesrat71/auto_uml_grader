@@ -178,18 +178,18 @@ export class AppService {
       comparison.summary.methodMatchCount;
     const memberScore = memberMax * this.ratio(matchedMembers, expectedMembers);
     const relationshipScore =
-      relationshipMax *
-      this.ratio(
-        comparison.summary.matchedRelationshipCount,
-        comparison.summary.solutionRelationshipCount,
-      );
+      relationshipMax * this.relationshipQualityRatio(comparison);
     const semanticPenalty =
       comparison.summary.extraClassCount +
       comparison.summary.extraRelationshipCount;
     const semanticScore = semanticMax * (semanticPenalty > 0 ? 0.6 : 1);
     const clarityScore =
       clarityMax *
-      (comparison.submission.metadata.unlinkedRelationshipCount > 0 ? 0.5 : 1);
+      (comparison.submission.metadata.unlinkedRelationshipCount > 0
+        ? 0.5
+        : this.hasRelationshipTypeMismatch(comparison)
+          ? 0.75
+          : 1);
 
     return [
       {
@@ -211,7 +211,7 @@ export class AppService {
         label: 'Relationships',
         maxMarks: this.roundScore(relationshipMax),
         awardedMarks: this.roundScore(relationshipScore),
-        reason: `${comparison.summary.matchedRelationshipCount}/${comparison.summary.solutionRelationshipCount} expected relationships matched.`,
+        reason: `${comparison.summary.matchedRelationshipCount}/${comparison.summary.solutionRelationshipCount} expected relationships connected the correct classes. Type mismatches receive partial credit.`,
       },
       {
         criterionKey: 'semantic_equivalence',
@@ -231,9 +231,37 @@ export class AppService {
         reason:
           comparison.submission.metadata.unlinkedRelationshipCount > 0
             ? 'Some submission relationships could not be linked to classes.'
-            : 'Submission relationships were linkable to classes.',
+            : this.hasRelationshipTypeMismatch(comparison)
+              ? 'At least one relationship used a different UML relationship type.'
+              : 'Submission relationships were linkable to classes.',
       },
     ];
+  }
+
+  private relationshipQualityRatio(comparison: DiagramComparison) {
+    const solutionCount = comparison.summary.solutionRelationshipCount;
+    if (solutionCount <= 0) {
+      return 1;
+    }
+
+    const exactMatches = comparison.relationshipMatches.filter(
+      (item) => item.matchType === 'exact',
+    ).length;
+    const typeMismatchMatches = comparison.relationshipMatches.filter(
+      (item) => item.matchType === 'type-mismatch',
+    ).length;
+
+    return this.clamp(
+      (exactMatches + typeMismatchMatches * 0.4) / solutionCount,
+      0,
+      1,
+    );
+  }
+
+  private hasRelationshipTypeMismatch(comparison: DiagramComparison) {
+    return comparison.relationshipMatches.some(
+      (item) => item.matchType === 'type-mismatch',
+    );
   }
 
   private estimateDeterministicScore(
@@ -251,6 +279,10 @@ export class AppService {
       return 1;
     }
     return Math.max(0, Math.min(1, numerator / denominator));
+  }
+
+  private clamp(value: number, min: number, max: number) {
+    return Math.max(min, Math.min(max, value));
   }
 
   private toPercentage(score: number, maxScore: number) {

@@ -1,0 +1,123 @@
+node:internal/modules/cjs/loader:1252
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\uni adelaide\sem 1 (2nd sem)\industry project\codebase\auto_uml_grader\uml-grader\apps\api\dist\main'
+    at Function._resolveFilename (node:internal/modules/cjs/loader:1249:15)
+    at Function._load (node:internal/modules/cjs/loader:1075:27)
+    at TracingChannel.traceSync (node:diagnostics_channel:322:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:219:24)
+    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:170:5)
+    at node:internal/main/run_main_module:36:49 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v22.12.0
+node:internal/modules/cjs/loader:1252
+  throw err;
+  ^
+
+Error: Cannot find module 'C:\uni adelaide\sem 1 (2nd sem)\industry project\codebase\auto_uml_grader\uml-grader\apps\api\dist\main'
+    at Function._resolveFilename (node:internal/modules/cjs/loader:1249:15)
+    at Function._load (node:internal/modules/cjs/loader:1075:27)
+    at TracingChannel.traceSync (node:diagnostics_channel:322:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:219:24)
+    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:170:5)
+    at node:internal/main/run_main_module:36:49 {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: []
+}
+
+Node.js v22.12.0
+[31m[Nest] 35704  - [39m05/04/2026, 11:58:42 PM [31m  ERROR[39m [38;5;3m[NestApplication] [39m[31mError: listen EADDRINUSE: address already in use :::4000[39m[38;5;3m +4ms[39m
+node:net:1912
+    const ex = new UVExceptionWithHostPort(err, 'listen', address, port);
+               ^
+
+Error: listen EADDRINUSE: address already in use :::4000
+    at Server.setupListenHandle [as _listen2] (node:net:1912:16)
+    at listenInCluster (node:net:1969:12)
+    at Server.listen (node:net:2074:7)
+    at ExpressAdapter.listen (C:\uni adelaide\sem 1 (2nd sem)\industry project\codebase\auto_uml_grader\uml-grader\apps\api\node_modules\@nestjs\platform-express\adapters\express-adapter.js:127:32)
+    at C:\uni adelaide\sem 1 (2nd sem)\industry project\codebase\auto_uml_grader\uml-grader\apps\api\node_modules\@nestjs\core\nest-application.js:188:30
+    at new Promise (<anonymous>)
+    at NestApplication.listen (C:\uni adelaide\sem 1 (2nd sem)\industry project\codebase\auto_uml_grader\uml-grader\apps\api\node_modules\@nestjs\core\nest-application.js:178:16)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async bootstrap (C:\uni adelaide\sem 1 (2nd sem)\industry project\codebase\auto_uml_grader\uml-grader\apps\api\src\main.ts:25:3) {
+  code: 'EADDRINUSE',
+  errno: -4091,
+  syscall: 'listen',
+  address: '::',
+  port: 4000
+}
+
+Node.js v22.12.0
+node:internal/modules/cjs/loader:1252
+  throw err;
+  ^
+
+Error: Cannot find module './app.module'
+Require stack:
+- C:\uni adelaide\sem 1 (2nd sem)\industry project\codebase\auto_uml_grader\uml-grader\apps\api\dist\main.js
+    at Function._resolveFilename (node:internal/modules/cjs/loader:1249:15)
+    at Function._load (node:internal/modules/cjs/loader:1075:27)
+    at TracingChannel.traceSync (node:diagnostics_channel:322:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:219:24)
+    at Module.require (node:internal/modules/cjs/loader:1340:12)
+    at require (node:internal/modules/helpers:138:16)
+    at Object.<anonymous> (C:\uni adelaide\sem 1 (2nd sem)\industry project\codebase\auto_uml_grader\uml-grader\apps\api\src\main.ts:3:1)
+    at Module._compile (node:internal/modules/cjs/loader:1565:14)
+    at Object..js (node:internal/modules/cjs/loader:1708:10)
+    at Module.load (node:internal/modules/cjs/loader:1318:32) {
+  code: 'MODULE_NOT_FOUND',
+  requireStack: [
+    'C:\\uni adelaide\\sem 1 (2nd sem)\\industry project\\codebase\\auto_uml_grader\\uml-grader\\apps\\api\\dist\\main.js'
+  ]
+}
+
+Node.js v22.12.0
+ERROR: The process "42204" not found.
+ERROR: The process "42204" not found.
+node:child_process:957
+    throw err;
+    ^
+
+Error: Command failed: taskkill /pid 42204 /T /F
+ERROR: The process "42204" not found.
+
+    at genericNodeError (node:internal/errors:983:15)
+    at wrappedFn (node:internal/errors:537:14)
+    at checkExecSyncError (node:child_process:882:11)
+    at execSync (node:child_process:954:15)
+    at treeKillSync (C:\uni adelaide\sem 1 (2nd sem)\industry project\codebase\auto_uml_grader\uml-grader\apps\api\node_modules\@nestjs\cli\lib\utils\tree-kill.js:7:38)
+    at C:\uni adelaide\sem 1 (2nd sem)\industry project\codebase\auto_uml_grader\uml-grader\apps\api\node_modules\@nestjs\cli\actions\start.action.js:68:46
+    at Object.onWatchStatusChange (C:\uni adelaide\sem 1 (2nd sem)\industry project\codebase\auto_uml_grader\uml-grader\apps\api\node_modules\@nestjs\cli\lib\compiler\watch-compiler.js:83:17)
+    at C:\uni adelaide\sem 1 (2nd sem)\industry project\codebase\auto_uml_grader\uml-grader\apps\api\node_modules\typescript\lib\typescript.js:133916:30
+    at emitFilesAndReportErrors (C:\uni adelaide\sem 1 (2nd sem)\industry project\codebase\auto_uml_grader\uml-grader\apps\api\node_modules\typescript\lib\typescript.js:133737:5)
+    at result.afterProgramCreate (C:\uni adelaide\sem 1 (2nd sem)\industry project\codebase\auto_uml_grader\uml-grader\apps\api\node_modules\typescript\lib\typescript.js:133912:5) {
+  status: 128,
+  signal: null,
+  output: [
+    null,
+    Buffer(0) [Uint8Array] [],
+    Buffer(39) [Uint8Array] [
+       69,  82,  82,  79,  82,  58,  32,  84, 104,
+      101,  32, 112, 114, 111,  99, 101, 115, 115,
+       32,  34,  52,  50,  50,  48,  52,  34,  32,
+      110, 111, 116,  32, 102, 111, 117, 110, 100,
+       46,  13,  10
+    ]
+  ],
+  pid: 39132,
+  stdout: Buffer(0) [Uint8Array] [],
+  stderr: Buffer(39) [Uint8Array] [
+     69,  82,  82,  79,  82,  58,  32,  84, 104,
+    101,  32, 112, 114, 111,  99, 101, 115, 115,
+     32,  34,  52,  50,  50,  48,  52,  34,  32,
+    110, 111, 116,  32, 102, 111, 117, 110, 100,
+     46,  13,  10
+  ]
+}
+
+Node.js v22.12.0

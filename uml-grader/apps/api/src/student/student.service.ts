@@ -5,6 +5,7 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
@@ -12,6 +13,8 @@ import {
   AssignmentDocument,
   Grade,
   GradeDocument,
+  Solution,
+  SolutionDocument,
   Submission,
   SubmissionDocument,
 } from '../schemas/entities.schema';
@@ -28,6 +31,35 @@ interface CreateSubmissionInput {
   mimeType: string;
   fileSizeBytes: number;
   imageDataUrl: string;
+}
+
+interface GraderGradeResponse {
+  score: number;
+  maxScore: number;
+  percentage: number;
+  summary: string;
+  rubricBreakdown: {
+    criterionKey: string;
+    label: string;
+    maxMarks: number;
+    awardedMarks: number;
+    reason?: string;
+  }[];
+  discrepancies: {
+    category: string;
+    severity: string;
+    message: string;
+    expected?: string;
+    actual?: string;
+    entityRef?: string;
+  }[];
+  flags: {
+    lowConfidence: boolean;
+    extractionIssues: boolean;
+    invalidJsonRecovered: boolean;
+    manualReviewRecommended: boolean;
+    notes: string[];
+  };
 }
 
 type StudentSubmissionStatus =
@@ -68,10 +100,13 @@ export class StudentService {
   constructor(
     @InjectModel(Assignment.name)
     private readonly assignmentModel: Model<AssignmentDocument>,
+    @InjectModel(Solution.name)
+    private readonly solutionModel: Model<SolutionDocument>,
     @InjectModel(Submission.name)
     private readonly submissionModel: Model<SubmissionDocument>,
     @InjectModel(Grade.name)
     private readonly gradeModel: Model<GradeDocument>,
+    private readonly configService: ConfigService,
   ) {}
 
   async getDashboardSummary(user?: RequestUser) {
@@ -149,22 +184,33 @@ export class StudentService {
       this.getSubmissionMap(submissionIds),
     ]);
 
-    return grades.map((grade) => ({
-      gradeId: grade._id.toString(),
-      assignmentId: grade.assignmentId.toString(),
-      submissionId: grade.submissionId.toString(),
-      title:
-        assignmentMap.get(grade.assignmentId.toString())?.title ?? 'Assignment',
-      score: grade.score,
-      maxScore: grade.maxScore,
-      percentage: grade.percentage,
-      updatedAt: (grade.updatedAt ?? grade.createdAt).toISOString(),
-      flags: this.extractFlags(grade),
-      submittedAt:
-        submissionMap
-          .get(grade.submissionId.toString())
-          ?.submittedAt?.toISOString() ?? null,
-    }));
+    const publishedAssignmentIds = new Set(
+      Array.from(assignmentMap.entries())
+        .filter(([, assignment]) => Boolean(assignment.marksPublishedAt))
+        .map(([assignmentId]) => assignmentId),
+    );
+
+    return grades
+      .filter((grade) =>
+        publishedAssignmentIds.has(grade.assignmentId.toString()),
+      )
+      .map((grade) => ({
+        gradeId: grade._id.toString(),
+        assignmentId: grade.assignmentId.toString(),
+        submissionId: grade.submissionId.toString(),
+        title:
+          assignmentMap.get(grade.assignmentId.toString())?.title ??
+          'Assignment',
+        score: grade.score,
+        maxScore: grade.maxScore,
+        percentage: grade.percentage,
+        updatedAt: (grade.updatedAt ?? grade.createdAt).toISOString(),
+        flags: this.extractFlags(grade),
+        submittedAt:
+          submissionMap
+            .get(grade.submissionId.toString())
+            ?.submittedAt?.toISOString() ?? null,
+      }));
   }
 
   async getAssignmentDetail(
@@ -198,16 +244,17 @@ export class StudentService {
     const grade = latestSubmission?.latestGradeId
       ? (gradeMap.get(latestSubmission.latestGradeId.toString()) ?? null)
       : null;
+    const visibleGrade = assignment.marksPublishedAt ? grade : null;
 
     const mappedStatus = this.mapSubmissionStatus(
       latestSubmission?.status,
-      Boolean(grade),
+      Boolean(visibleGrade),
     );
     const isClosed = this.isAssignmentClosed(assignment.dueAt);
     const canSubmitNow =
       !isClosed && (mappedStatus === 'none' || mappedStatus === 'failed');
     const attemptRows = submissions.map((submission, index) => {
-      const submissionGrade = submission.latestGradeId
+      const submissionGrade = assignment.marksPublishedAt && submission.latestGradeId
         ? gradeMap.get(submission.latestGradeId.toString())
         : undefined;
       const automaticScore = submissionGrade ? submissionGrade.score : null;
@@ -236,7 +283,7 @@ export class StudentService {
         ),
       };
     });
-    const latestAutomaticMark = grade ? grade.score : null;
+    const latestAutomaticMark = visibleGrade ? visibleGrade.score : null;
     const bestMark = attemptRows
       .map((item) => item.finalMark)
       .filter((value): value is number => typeof value === 'number');
@@ -247,11 +294,15 @@ export class StudentService {
       courseName: 'UML Grading',
       description: assignment.description ?? '',
       instructions: [
-        'Submit a UML diagram image for automated grading against the reference solutions.',
+        'Submit a UMLet UXF file for automated grading, or upload an image for manual/future image-based grading.',
         'Make sure classes, attributes, methods, and relationships match the expected task.',
       ],
       requiredDiagramType: 'UML class diagram',
-      submissionFormatRules: ['PNG and JPEG only', 'One image per submission'],
+      submissionFormatRules: [
+        'UXF/XML files are auto-graded now',
+        'PNG/JPEG image submissions are stored for future image-based grading',
+        'One file per submission',
+      ],
       namingGuidance:
         'Use clear and consistent class, method, and attribute names to match the expected structure.',
       markingNote:
@@ -279,23 +330,23 @@ export class StudentService {
             extractionError: latestSubmission.extractionError ?? null,
           }
         : null,
-      grade: grade
+      grade: visibleGrade
         ? {
-            gradeId: grade._id.toString(),
-            score: grade.score,
-            maxScore: grade.maxScore,
-            percentage: grade.percentage,
-            breakdown: grade.rubricBreakdown ?? [],
-            discrepancies: grade.discrepancies ?? [],
-            flags: this.extractFlags(grade),
-            updatedAt: (grade.updatedAt ?? grade.createdAt).toISOString(),
+            gradeId: visibleGrade._id.toString(),
+            score: visibleGrade.score,
+            maxScore: visibleGrade.maxScore,
+            percentage: visibleGrade.percentage,
+            breakdown: visibleGrade.rubricBreakdown ?? [],
+            discrepancies: visibleGrade.discrepancies ?? [],
+            flags: this.extractFlags(visibleGrade),
+            updatedAt: (visibleGrade.updatedAt ?? visibleGrade.createdAt).toISOString(),
             teacherFinalScore:
-              grade.teacherOverride?.isOverridden &&
-              typeof grade.teacherOverride.finalScore === 'number'
-                ? grade.teacherOverride.finalScore
+              visibleGrade.teacherOverride?.isOverridden &&
+              typeof visibleGrade.teacherOverride.finalScore === 'number'
+                ? visibleGrade.teacherOverride.finalScore
                 : null,
-            teacherComment: grade.teacherOverride?.comment ?? null,
-            chosenSolutionLabel: grade.chosenSolutionLabel ?? null,
+            teacherComment: visibleGrade.teacherOverride?.comment ?? null,
+            chosenSolutionLabel: visibleGrade.chosenSolutionLabel ?? null,
             confidenceScore:
               typeof latestSubmission?.extractedUmlJson?.extractionMeta
                 ?.confidence === 'number'
@@ -323,26 +374,29 @@ export class StudentService {
         bestMark: bestMark.length ? Math.max(...bestMark) : null,
         latestMark: latestAutomaticMark,
         finalMark:
-          grade?.teacherOverride?.isOverridden &&
-          typeof grade.teacherOverride.finalScore === 'number'
-            ? grade.teacherOverride.finalScore
+          visibleGrade?.teacherOverride?.isOverridden &&
+          typeof visibleGrade?.teacherOverride?.finalScore === 'number'
+            ? visibleGrade.teacherOverride.finalScore
             : latestAutomaticMark,
-        finalMarkShown: Boolean(grade),
+        finalMarkShown: Boolean(visibleGrade),
         lateStatus: isClosed ? 'Closed / overdue' : 'On time',
       },
       latestResult: {
-        gradingStatus:
-          grade?.flags?.manualReviewRecommended || grade?.flags?.lowConfidence
-            ? 'Needs review'
-            : this.formatStatusLabel(mappedStatus),
+        gradingStatus: this.getStudentGradingStatus(
+          Boolean(assignment.marksPublishedAt),
+          grade,
+          visibleGrade,
+          mappedStatus,
+        ),
         automatedMark: latestAutomaticMark,
         finalTeacherMark:
-          grade?.teacherOverride?.isOverridden &&
-          typeof grade.teacherOverride.finalScore === 'number'
-            ? grade.teacherOverride.finalScore
+          visibleGrade?.teacherOverride?.isOverridden &&
+          typeof visibleGrade.teacherOverride.finalScore === 'number'
+            ? visibleGrade.teacherOverride.finalScore
             : null,
-        bestMatchedSolutionLabel: grade?.chosenSolutionLabel ?? 'Not available',
-        shortFeedbackSummary: this.buildShortFeedbackSummary(grade),
+        bestMatchedSolutionLabel:
+          visibleGrade?.chosenSolutionLabel ?? 'Not available',
+        shortFeedbackSummary: this.buildShortFeedbackSummary(visibleGrade),
         confidenceScore:
           typeof latestSubmission?.extractedUmlJson?.extractionMeta
             ?.confidence === 'number'
@@ -354,7 +408,7 @@ export class StudentService {
               )
             : null,
       },
-      feedback: this.buildStudentFeedback(grade),
+      feedback: this.buildStudentFeedback(visibleGrade),
     };
   }
 
@@ -374,7 +428,7 @@ export class StudentService {
       throw new NotFoundException('Assignment not found.');
     }
 
-    this.validateSubmissionInput(input);
+    const mimeType = this.validateSubmissionInput(input);
 
     const latestSubmission = await this.submissionModel
       .findOne({ assignmentId: assignment._id, studentId })
@@ -403,20 +457,182 @@ export class StudentService {
       assignmentId: assignment._id,
       studentId,
       originalFileName: input.originalFileName.trim(),
-      mimeType: input.mimeType,
+      mimeType,
       fileSizeBytes: input.fileSizeBytes,
       imageUrl: input.imageDataUrl,
       imageStorageKey: `inline:${assignment._id.toString()}:${studentId.toString()}:${now.getTime()}`,
-      status: 'submitted',
+      status: 'processing',
       submittedAt: now,
     });
 
+    await this.gradeSubmission(created, assignment, studentId);
+
+    const graded = await this.submissionModel.findById(created._id).lean();
+
     return {
-      message: 'Submission uploaded successfully.',
+      message: 'Submission uploaded and graded successfully.',
       submissionId: created._id.toString(),
-      status: 'submitted',
+      status: this.mapSubmissionStatus(
+        graded?.status,
+        Boolean(graded?.latestGradeId),
+      ),
       submittedAt: (created.submittedAt ?? created.createdAt).toISOString(),
     };
+  }
+
+  private async gradeSubmission(
+    submission: SubmissionDocument,
+    assignment: AssignmentDocument,
+    studentId: Types.ObjectId,
+  ) {
+    if (!this.isTextUmlMimeType(submission.mimeType)) {
+      await this.submissionModel.updateOne(
+        { _id: submission._id },
+        {
+          status: 'submitted',
+          extractionError:
+            'Image-based grading is not implemented yet. The submission was stored for future image-based evaluation.',
+        },
+      );
+      return;
+    }
+
+    const solution = await this.solutionModel
+      .findOne({
+        assignmentId: assignment._id,
+        mimeType: { $in: ['application/uxf', 'application/xml', 'text/xml'] },
+      })
+      .sort({ createdAt: 1 })
+      .lean();
+
+    if (!solution) {
+      await this.markSubmissionFailed(
+        submission._id,
+        'No UXF/XML reference solution is available for automatic grading. Image-based grading is not implemented yet.',
+      );
+      return;
+    }
+
+    try {
+      const graderResult = await this.callGrader({
+        assignmentId: assignment._id.toString(),
+        submissionId: submission._id.toString(),
+        solutionId: solution._id.toString(),
+        solutionUxf: this.dataUrlToText(solution.imageUrl),
+        submissionUxf: this.dataUrlToText(submission.imageUrl),
+        synonymsMap: Object.fromEntries(assignment.synonymsMap ?? []),
+        maxScore: assignment.totalMarks,
+      });
+
+      const grade = await this.gradeModel.create({
+        submissionId: submission._id,
+        assignmentId: assignment._id,
+        studentId,
+        score: graderResult.score,
+        maxScore: graderResult.maxScore,
+        percentage: graderResult.percentage,
+        rubricBreakdown: graderResult.rubricBreakdown ?? [],
+        chosenSolutionId: solution._id,
+        chosenSolutionLabel: solution.label,
+        discrepancies: graderResult.discrepancies ?? [],
+        flags: graderResult.flags ?? {},
+        gradingVersion: 'local-ollama-v1',
+        graderModelName: this.getGraderBaseUrl(),
+      });
+
+      await this.submissionModel.updateOne(
+        { _id: submission._id },
+        {
+          status: 'graded',
+          latestGradeId: grade._id,
+          extractionError: undefined,
+        },
+      );
+    } catch (error) {
+      await this.markSubmissionFailed(
+        submission._id,
+        error instanceof Error ? error.message : 'Grading failed.',
+      );
+    }
+  }
+
+  private async callGrader(payload: {
+    assignmentId: string;
+    submissionId: string;
+    solutionId: string;
+    solutionUxf: string;
+    submissionUxf: string;
+    synonymsMap: Record<string, string[]>;
+    maxScore: number;
+  }): Promise<GraderGradeResponse> {
+    const response = await fetch(`${this.getGraderBaseUrl()}/grade`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    const body = (await response.json().catch(() => null)) as
+      | GraderGradeResponse
+      | { message?: unknown }
+      | null;
+
+    if (!response.ok) {
+      const message =
+        body && typeof body === 'object' && 'message' in body
+          ? String(body.message)
+          : response.statusText;
+      throw new Error(`Grader service failed: ${message}`);
+    }
+
+    if (!this.isValidGraderResponse(body)) {
+      throw new Error('Grader service returned an invalid grade response.');
+    }
+
+    return body;
+  }
+
+  private isValidGraderResponse(value: unknown): value is GraderGradeResponse {
+    if (!value || typeof value !== 'object') {
+      return false;
+    }
+    const candidate = value as Partial<GraderGradeResponse>;
+    return (
+      Number.isFinite(candidate.score) &&
+      Number.isFinite(candidate.maxScore) &&
+      Number.isFinite(candidate.percentage) &&
+      Array.isArray(candidate.rubricBreakdown) &&
+      Array.isArray(candidate.discrepancies) &&
+      Boolean(candidate.flags)
+    );
+  }
+
+  private async markSubmissionFailed(
+    submissionId: Types.ObjectId,
+    reason: string,
+  ) {
+    await this.submissionModel.updateOne(
+      { _id: submissionId },
+      {
+        status: 'failed',
+        extractionError: reason,
+      },
+    );
+  }
+
+  private dataUrlToText(dataUrl: string) {
+    const match = dataUrl.match(/^data:[^;]*;base64,(.+)$/);
+    if (!match?.[1]) {
+      throw new Error('Stored UXF data URL is invalid.');
+    }
+
+    return Buffer.from(match[1], 'base64').toString('utf8');
+  }
+
+  private getGraderBaseUrl() {
+    return (
+      this.configService.get<string>('GRADER_BASE_URL') ??
+      'http://127.0.0.1:4100'
+    ).replace(/\/$/, '');
   }
 
   async getSubmissionDetail(
@@ -435,12 +651,13 @@ export class StudentService {
       throw new NotFoundException('Submission not found.');
     }
 
-    const [assignment, grade] = await Promise.all([
-      this.assignmentModel.findById(submission.assignmentId).lean(),
-      submission.latestGradeId
-        ? this.gradeModel.findById(submission.latestGradeId).lean()
-        : Promise.resolve(null),
-    ]);
+    const assignment = await this.assignmentModel
+      .findById(submission.assignmentId)
+      .lean();
+    const grade =
+      assignment?.marksPublishedAt && submission.latestGradeId
+        ? await this.gradeModel.findById(submission.latestGradeId).lean()
+        : null;
 
     const mappedStatus = this.mapSubmissionStatus(
       submission.status,
@@ -540,8 +757,11 @@ export class StudentService {
     submission: SubmissionDocument | undefined,
     gradeMap: Map<string, GradeDocument>,
   ): AssignmentWithLatest {
-    const grade = submission?.latestGradeId
-      ? gradeMap.get(submission.latestGradeId.toString())
+    const visibleGradeId = assignment.marksPublishedAt
+      ? submission?.latestGradeId
+      : undefined;
+    const grade = visibleGradeId
+      ? gradeMap.get(visibleGradeId.toString())
       : undefined;
     const status = this.mapSubmissionStatus(submission?.status, Boolean(grade));
     const flags = grade ? this.extractFlags(grade) : [];
@@ -796,6 +1016,26 @@ export class StudentService {
     };
   }
 
+  private getStudentGradingStatus(
+    marksPublished: boolean,
+    internalGrade: GradeDocument | null,
+    visibleGrade: GradeDocument | null,
+    status: StudentSubmissionStatus,
+  ) {
+    if (!marksPublished && internalGrade) {
+      return 'Marks not published';
+    }
+
+    if (
+      visibleGrade?.flags?.manualReviewRecommended ||
+      visibleGrade?.flags?.lowConfidence
+    ) {
+      return 'Needs review';
+    }
+
+    return this.formatStatusLabel(status);
+  }
+
   private formatStatusLabel(status: StudentSubmissionStatus) {
     switch (status) {
       case 'none':
@@ -885,8 +1125,21 @@ export class StudentService {
       throw new BadRequestException('originalFileName is required.');
     }
 
-    if (!['image/png', 'image/jpeg'].includes(input.mimeType)) {
-      throw new BadRequestException('Only PNG and JPEG files are supported.');
+    const normalizedMimeType = this.normalizeSubmissionMimeType(input);
+    const isAllowedMimeType =
+      this.isTextUmlMimeType(normalizedMimeType) ||
+      ['image/png', 'image/jpeg', 'image/jpg'].includes(normalizedMimeType);
+    const isAllowedExtension =
+      input.originalFileName.toLowerCase().endsWith('.uxf') ||
+      input.originalFileName.toLowerCase().endsWith('.xml') ||
+      input.originalFileName.toLowerCase().endsWith('.png') ||
+      input.originalFileName.toLowerCase().endsWith('.jpg') ||
+      input.originalFileName.toLowerCase().endsWith('.jpeg');
+
+    if (!isAllowedMimeType && !isAllowedExtension) {
+      throw new BadRequestException(
+        'Only UXF/XML, PNG, and JPEG files are supported.',
+      );
     }
 
     if (!Number.isFinite(input.fileSizeBytes) || input.fileSizeBytes <= 0) {
@@ -894,13 +1147,52 @@ export class StudentService {
     }
 
     if (
-      !input.imageDataUrl?.startsWith(`data:${input.mimeType};base64,`) ||
+      !input.imageDataUrl?.startsWith('data:') ||
+      !input.imageDataUrl.includes(';base64,') ||
       input.imageDataUrl.length < 64
     ) {
       throw new BadRequestException(
         'imageDataUrl must be a valid base64 data URL.',
       );
     }
+
+    return normalizedMimeType;
+  }
+
+  private normalizeSubmissionMimeType(input: CreateSubmissionInput) {
+    const mimeType = input.mimeType?.trim().toLowerCase();
+    const fileName = input.originalFileName.trim().toLowerCase();
+
+    if (
+      this.isTextUmlMimeType(mimeType) ||
+      ['image/png', 'image/jpeg'].includes(mimeType)
+    ) {
+      return mimeType;
+    }
+
+    if (fileName.endsWith('.uxf')) {
+      return 'application/uxf';
+    }
+
+    if (fileName.endsWith('.xml')) {
+      return 'application/xml';
+    }
+
+    if (fileName.endsWith('.png')) {
+      return 'image/png';
+    }
+
+    if (fileName.endsWith('.jpg') || fileName.endsWith('.jpeg')) {
+      return 'image/jpeg';
+    }
+
+    return mimeType;
+  }
+
+  private isTextUmlMimeType(mimeType?: string) {
+    return ['application/uxf', 'application/xml', 'text/xml'].includes(
+      mimeType ?? '',
+    );
   }
 
   private getStudentObjectId(user?: RequestUser) {

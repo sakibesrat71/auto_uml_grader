@@ -22,6 +22,30 @@ interface MatchCandidate {
   matchType: ClassMatch['matchType'];
 }
 
+const DEFAULT_SYNONYM_GROUPS: Record<string, string[]> = {
+  Customer: ['Client', 'Buyer', 'Purchaser'],
+  User: ['Account', 'AccountHolder'],
+  Student: ['Learner', 'Pupil'],
+  Teacher: ['Instructor', 'Lecturer', 'Tutor'],
+  Staff: ['Employee', 'Worker'],
+  Librarian: ['LibraryStaff', 'StaffMember'],
+  Product: ['Item', 'StockItem', 'CatalogItem'],
+  Order: ['Purchase', 'Transaction', 'Sale'],
+  Payment: ['TransactionPayment'],
+  Loan: ['Borrowing', 'Borrow', 'Checkout'],
+  Book: ['Publication', 'Title'],
+  customerId: ['clientId', 'buyerId', 'purchaserId'],
+  customerName: ['clientName', 'buyerName'],
+  userId: ['accountId', 'accountHolderId'],
+  studentId: ['learnerId', 'pupilId'],
+  teacherId: ['instructorId', 'lecturerId', 'tutorId'],
+  productId: ['itemId', 'stockItemId'],
+  productName: ['itemName'],
+  orderId: ['purchaseId', 'transactionId'],
+  stock: ['quantity', 'stockQuantity', 'availableQuantity', 'copiesAvailable'],
+  price: ['cost', 'amount'],
+};
+
 @Injectable()
 export class DiagramComparisonService {
   compare(
@@ -127,8 +151,16 @@ export class DiagramComparisonService {
       }
 
       return (
-        this.memberOverlapScore(right.solutionClass, right.submissionClass) -
-        this.memberOverlapScore(left.solutionClass, left.submissionClass)
+        this.memberOverlapScore(
+          right.solutionClass,
+          right.submissionClass,
+          synonymGroups,
+        ) -
+        this.memberOverlapScore(
+          left.solutionClass,
+          left.submissionClass,
+          synonymGroups,
+        )
       );
     });
     const usedSolutionNames = new Set<string>();
@@ -345,8 +377,20 @@ export class DiagramComparisonService {
 
   private buildSynonymGroups(synonymsMap: Record<string, string[]>) {
     const groups = new Map<string, Set<string>>();
+    const combinedSynonyms = new Map<string, string[]>();
+
+    for (const [term, aliases] of Object.entries(DEFAULT_SYNONYM_GROUPS)) {
+      combinedSynonyms.set(term, aliases);
+    }
 
     for (const [term, aliases] of Object.entries(synonymsMap)) {
+      combinedSynonyms.set(term, [
+        ...(combinedSynonyms.get(term) ?? []),
+        ...aliases,
+      ]);
+    }
+
+    for (const [term, aliases] of combinedSynonyms.entries()) {
       const normalizedValues = [
         this.normalizeName(term),
         ...aliases.map((alias) => this.normalizeName(alias)),
@@ -368,20 +412,24 @@ export class DiagramComparisonService {
     return groups;
   }
 
-  private memberOverlapScore(left: UmlClass, right: UmlClass) {
-    const rightAttributes = new Set(
-      right.attributes.map((item) => this.normalizeName(item.name)),
-    );
-    const rightMethods = new Set(
-      right.methods.map((item) => this.normalizeName(item.name)),
-    );
+  private memberOverlapScore(
+    left: UmlClass,
+    right: UmlClass,
+    synonymGroups: Map<string, Set<string>>,
+  ) {
+    const rightAttributes = right.attributes.map((item) => item.name);
+    const rightMethods = right.methods.map((item) => item.name);
 
     return (
       left.attributes.filter((item) =>
-        rightAttributes.has(this.normalizeName(item.name)),
+        rightAttributes.some((rightName) =>
+          this.getNameMatchType(item.name, rightName, synonymGroups),
+        ),
       ).length +
       left.methods.filter((item) =>
-        rightMethods.has(this.normalizeName(item.name)),
+        rightMethods.some((rightName) =>
+          this.getNameMatchType(item.name, rightName, synonymGroups),
+        ),
       ).length
     );
   }

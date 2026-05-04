@@ -51,6 +51,50 @@ describe('DiagramComparisonService', () => {
     });
   });
 
+  it('uses built-in academic and domain synonyms without teacher input', () => {
+    const solution = makeDiagram({
+      classes: [
+        {
+          name: 'Customer',
+          attributes: ['customerId', 'email'],
+          methods: ['placeOrder'],
+        },
+      ],
+      relationships: [],
+    });
+    const submission = makeDiagram({
+      classes: [
+        {
+          name: 'Client',
+          attributes: ['clientId', 'email'],
+          methods: ['placeOrder'],
+        },
+      ],
+      relationships: [],
+    });
+
+    const comparison = service.compare(solution, submission);
+
+    expect(comparison.classMatches).toEqual([
+      expect.objectContaining({
+        solutionClass: 'Customer',
+        submissionClass: 'Client',
+        matchType: 'synonym',
+        matchedAttributes: ['customerId', 'email'],
+        missingAttributes: [],
+        extraAttributes: [],
+        missingMethods: [],
+      }),
+    ]);
+    expect(comparison.summary).toMatchObject({
+      matchedClassCount: 1,
+      missingClassCount: 0,
+      extraClassCount: 0,
+      attributeMatchCount: 2,
+      methodMatchCount: 1,
+    });
+  });
+
   it('compares relationships through matched class names', () => {
     const solution = makeDiagram({
       classes: [

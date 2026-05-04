@@ -91,6 +91,17 @@ export class TeacherAssignmentsController {
     );
   }
 
+  @Patch(':assignmentId/publish-marks')
+  publishMarks(
+    @Req() request: AuthenticatedRequest,
+    @Param('assignmentId') assignmentId: string,
+  ) {
+    return this.teacherAssignmentsService.publishMarks(
+      request.user,
+      assignmentId,
+    );
+  }
+
   @Delete(':assignmentId')
   deleteAssignment(
     @Req() request: AuthenticatedRequest,

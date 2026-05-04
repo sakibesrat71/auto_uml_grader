@@ -248,6 +248,8 @@ export class TeacherAssignmentsService {
           assignment.dueAt,
         ),
         isPublished: assignment.isPublished,
+        marksPublishedAt: assignment.marksPublishedAt?.toISOString() ?? null,
+        marksPublishedBy: assignment.marksPublishedBy ?? null,
       },
       summary: {
         totalSubmissions: submissionRows.length,
@@ -306,7 +308,8 @@ export class TeacherAssignmentsService {
           'Closed',
         canDeleteAssignment: true,
         canExportMarksCsv: submissionRows.length > 0,
-        canPublishMarks: gradedRows.length > 0,
+        canPublishMarks:
+          gradedRows.length > 0 && !Boolean(assignment.marksPublishedAt),
       },
       activity,
     };
@@ -469,6 +472,53 @@ export class TeacherAssignmentsService {
     };
   }
 
+  async publishMarks(user: RequestUser | undefined, assignmentId: string) {
+    const teacherId = this.getTeacherObjectId(user);
+    const assignment = await this.assignmentModel.findById(
+      this.toObjectId(assignmentId, 'assignmentId'),
+    );
+
+    if (!assignment) {
+      throw new NotFoundException('Assignment not found.');
+    }
+    if (assignment.teacherId.toString() !== teacherId.toString()) {
+      throw new ForbiddenException('You can only publish your own assignment marks.');
+    }
+
+    const gradedCount = await this.submissionModel.countDocuments({
+      assignmentId: assignment._id,
+      latestGradeId: { $exists: true, $ne: null },
+    });
+    if (gradedCount === 0) {
+      throw new BadRequestException('No graded submissions are available to publish.');
+    }
+
+    assignment.marksPublishedAt = new Date();
+    assignment.marksPublishedBy = user?.fullName || user?.email || user?.id || '';
+    await assignment.save();
+
+    const recipients = assignment.assignedStudentEmails ?? [];
+    const emailNotifications =
+      recipients.length > 0
+        ? await this.sendMarksPublishedEmails(assignment, recipients, user)
+        : {
+            sentCount: 0,
+            failedCount: 0,
+            skippedCount: 0,
+            failures: [],
+            message: 'No invited students were configured for this assignment.',
+          };
+
+    return {
+      message: 'Marks published successfully.',
+      assignmentId: assignment._id.toString(),
+      marksPublishedAt: assignment.marksPublishedAt.toISOString(),
+      marksPublishedBy: assignment.marksPublishedBy,
+      gradedCount,
+      emailNotifications,
+    };
+  }
+
   async deleteAssignment(user: RequestUser | undefined, assignmentId: string) {
     const teacherId = this.getTeacherObjectId(user);
     const assignmentObjectId = this.toObjectId(assignmentId, 'assignmentId');
@@ -580,6 +630,8 @@ export class TeacherAssignmentsService {
       assignedStudentEmails: assignment.assignedStudentEmails ?? [],
       solutionCount: assignment.solutionCount,
       isPublished: assignment.isPublished,
+      marksPublishedAt: assignment.marksPublishedAt?.toISOString() ?? null,
+      marksPublishedBy: assignment.marksPublishedBy ?? null,
       createdAt: assignment.createdAt.toISOString(),
       updatedAt: assignment.updatedAt.toISOString(),
     };
@@ -1254,6 +1306,84 @@ export class TeacherAssignmentsService {
             error instanceof Error ? error.message : 'Unknown email error';
           this.logger.warn(
             `Failed to send assignment reminder to ${email}: ${reason}`,
+          );
+          return { email, success: false as const, reason };
+        }
+      }),
+    );
+
+    const failures = results
+      .filter((result) => !result.success)
+      .map((result) => ({
+        email: result.email,
+        reason: result.reason,
+      }));
+
+    return {
+      sentCount: results.length - failures.length,
+      failedCount: failures.length,
+      skippedCount: 0,
+      failures,
+    };
+  }
+
+  private async sendMarksPublishedEmails(
+    assignment: AssignmentDocument,
+    recipientEmails: string[],
+    user?: RequestUser,
+  ) {
+    const host = this.configService.get<string>('SMTP_HOST');
+    const port = Number(this.configService.get<string>('SMTP_PORT') ?? '587');
+    const smtpUser = this.configService.get<string>('SMTP_USER');
+    const smtpPass = this.configService.get<string>('SMTP_PASS');
+    const from = this.configService.get<string>('SMTP_FROM') ?? smtpUser;
+
+    if (!host || !smtpUser || !smtpPass || !from) {
+      const message =
+        'SMTP configuration is missing. Marks published emails were skipped.';
+      this.logger.warn(message);
+      return {
+        sentCount: 0,
+        failedCount: 0,
+        skippedCount: recipientEmails.length,
+        failures: [],
+        message,
+      };
+    }
+
+    const transporter = nodemailer.createTransport({
+      host,
+      port,
+      secure: port === 465,
+      auth: { user: smtpUser, pass: smtpPass },
+    });
+
+    const teacherName = user?.fullName || user?.email || 'Your teacher';
+    const uniqueRecipients = [...new Set(recipientEmails.map((email) => email.trim().toLowerCase()))];
+    const results = await Promise.all(
+      uniqueRecipients.map(async (email) => {
+        try {
+          await transporter.sendMail({
+            from,
+            to: email,
+            subject: `Marks published: ${assignment.title}`,
+            text: [
+              `Hello,`,
+              ``,
+              `${teacherName} has published marks for ${assignment.title}.`,
+              ``,
+              `Marks has been published.`,
+              ``,
+              `Please log in to UML Grader to view your mark and feedback.`,
+            ].join('\n'),
+          });
+
+          return { email, success: true as const };
+        } catch (error) {
+          const reason =
+            error instanceof Error ? error.message : 'Unknown email error';
+          this.logger.warn(
+            `Failed to send marks published email to ${email}: ${reason}`,
           );
           return { email, success: false as const, reason };
         }

@@ -85,6 +85,12 @@ export class Assignment {
   @Prop({ default: false })
   isPublished!: boolean;
 
+  @Prop()
+  marksPublishedAt?: Date;
+
+  @Prop()
+  marksPublishedBy?: string;
+
   createdAt!: Date;
   updatedAt!: Date;
 }
