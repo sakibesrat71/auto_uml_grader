@@ -210,4 +210,17 @@ export class TeacherAssignmentsController {
       body,
     );
   }
+
+  @Patch(':assignmentId/submissions/:submissionId/regrade')
+  regradeSubmission(
+    @Req() request: AuthenticatedRequest,
+    @Param('assignmentId') assignmentId: string,
+    @Param('submissionId') submissionId: string,
+  ) {
+    return this.teacherAssignmentsService.regradeSubmission(
+      request.user,
+      assignmentId,
+      submissionId,
+    );
+  }
 }

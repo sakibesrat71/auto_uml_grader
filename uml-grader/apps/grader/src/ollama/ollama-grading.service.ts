@@ -13,6 +13,12 @@ interface GradeWithOllamaInput {
   maxScore: number;
 }
 
+interface GradeImagesWithOllamaInput {
+  solutionImageDataUrl: string;
+  submissionImageDataUrl: string;
+  maxScore: number;
+}
+
 interface OllamaGenerateResponse {
   response?: string;
   model?: string;
@@ -87,6 +93,85 @@ export class OllamaGradingService {
         ],
       },
     };
+  }
+
+  async gradeImages(
+    input: GradeImagesWithOllamaInput,
+  ): Promise<GradeResponse> {
+    const payload = await this.generateImageGrade(input);
+    const score = this.clamp(this.round(payload.score), 0, input.maxScore);
+    const confidence = this.clamp(payload.confidence, 0, 1);
+
+    return {
+      score,
+      maxScore: input.maxScore,
+      percentage: this.round((score / input.maxScore) * 100),
+      summary: payload.summary.trim(),
+      rubricBreakdown: this.normalizeRubric(
+        payload.rubricBreakdown,
+        input.maxScore,
+        score,
+      ),
+      discrepancies: this.normalizeDiscrepancies(payload.discrepancies),
+      flags: {
+        lowConfidence: confidence < 0.7,
+        extractionIssues: confidence < 0.7,
+        invalidJsonRecovered: false,
+        manualReviewRecommended:
+          payload.manualReviewRecommended || confidence < 0.7,
+        notes: [
+          `Ollama vision model: ${this.getVisionModelName()}.`,
+          `Vision grading confidence: ${this.round(confidence * 100)}%.`,
+          ...payload.notes.map((item) => item.trim()).filter(Boolean),
+        ],
+      },
+    };
+  }
+
+  private async generateImageGrade(
+    input: GradeImagesWithOllamaInput,
+  ): Promise<LlmGradePayload> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.getBaseUrl()}/api/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: this.getVisionModelName(),
+          prompt: this.buildImagePrompt(input.maxScore),
+          images: [
+            this.dataUrlToBase64(input.solutionImageDataUrl),
+            this.dataUrlToBase64(input.submissionImageDataUrl),
+          ],
+          stream: false,
+          format: this.getResponseSchema(input.maxScore),
+          options: {
+            temperature: 0.1,
+            top_p: 0.9,
+          },
+        }),
+      });
+    } catch (error) {
+      throw new Error(
+        `Could not connect to Ollama at ${this.getBaseUrl()}: ${
+          error instanceof Error ? error.message : 'fetch failed'
+        }`,
+      );
+    }
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(
+        `Ollama vision request failed with ${response.status}: ${text || response.statusText}`,
+      );
+    }
+
+    const generated = (await response.json()) as OllamaGenerateResponse;
+    if (!generated.response) {
+      throw new Error('Ollama vision response did not contain generated JSON.');
+    }
+
+    return this.parseAndValidatePayload(generated.response, input.maxScore);
   }
 
   private async generateGrade(
@@ -225,6 +310,39 @@ export class OllamaGradingService {
     };
 
     return JSON.stringify(compactContext);
+  }
+
+  private buildImagePrompt(maxScore: number) {
+    return JSON.stringify({
+      task: 'Grade a student UML class diagram screenshot against a teacher reference UML class diagram screenshot.',
+      imageOrder: [
+        'Image 1 is the teacher reference solution.',
+        'Image 2 is the student submission.',
+      ],
+      maxScore,
+      rubric: [
+        'Class coverage: 30%',
+        'Attributes and methods: 20%',
+        'Relationships, inheritance, association, dependency, multiplicity: 30%',
+        'Semantic equivalence and acceptable alternate modelling: 10%',
+        'UML correctness and clarity: 10%',
+      ],
+      gradingRules: [
+        'Read class boxes, class names, attributes, methods, relationship lines, arrowheads, labels, and multiplicities from both screenshots.',
+        'Grade semantic UML equivalence, not pixel-perfect layout.',
+        'Do not penalize harmless layout differences, colors, zoom level, or UMLet canvas position.',
+        'Penalize missing or extra classes, incorrect or missing attributes and methods, wrong relationship endpoints, wrong relationship type, missing inheritance, and unclear unreadable elements.',
+        'If text or relationship arrowheads are unreadable, mark manualReviewRecommended true and explain the uncertainty.',
+      ],
+      outputRules: [
+        'Return only JSON matching the schema.',
+        `score must be between 0 and ${maxScore}.`,
+        `Use exactly these rubric maxMarks when maxScore is ${maxScore}: Class coverage ${this.round(maxScore * 0.3)}, Attributes and methods ${this.round(maxScore * 0.2)}, Relationships ${this.round(maxScore * 0.3)}, Semantic equivalence ${this.round(maxScore * 0.1)}, UML correctness and clarity ${this.round(maxScore * 0.1)}.`,
+        'Use awardedMarks values that add up approximately to score and never exceed each criterion maxMarks.',
+        'The discrepancies array must contain only actual problems. Return an empty discrepancies array when there are no visible problems.',
+        'confidence must reflect image readability and certainty about the comparison.',
+      ],
+    });
   }
 
   private compactDiagram(diagram: DiagramComparison['solution']) {
@@ -575,6 +693,20 @@ export class OllamaGradingService {
     return (
       this.configService.get<string>('OLLAMA_MODEL') ?? 'qwen2.5:3b-instruct'
     );
+  }
+
+  private getVisionModelName() {
+    return (
+      this.configService.get<string>('OLLAMA_VISION_MODEL') ?? 'gemma3:4b'
+    );
+  }
+
+  private dataUrlToBase64(dataUrl: string) {
+    const match = dataUrl.match(/^data:image\/[^;]+;base64,(.+)$/);
+    if (!match?.[1]) {
+      throw new Error('Image data URL is invalid.');
+    }
+    return match[1];
   }
 
   private clamp(value: number, min: number, max: number) {

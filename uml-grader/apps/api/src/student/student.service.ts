@@ -69,6 +69,8 @@ type StudentSubmissionStatus =
   | 'graded'
   | 'failed';
 
+type SubmissionMode = 'uxf' | 'image' | 'unknown';
+
 export interface AssignmentWithLatest {
   assignmentId: string;
   title: string;
@@ -228,10 +230,14 @@ export class StudentService {
       throw new NotFoundException('Assignment not found.');
     }
 
-    const submissions = await this.submissionModel
-      .find({ assignmentId: assignment._id, studentId })
-      .sort({ createdAt: -1, submittedAt: -1 })
-      .lean();
+    const [submissions, primarySolution] = await Promise.all([
+      this.submissionModel
+        .find({ assignmentId: assignment._id, studentId })
+        .sort({ createdAt: -1, submittedAt: -1 })
+        .lean(),
+      this.getPrimarySolution(assignment._id),
+    ]);
+    const submissionMode = this.getSubmissionModeFromSolution(primarySolution);
     const latestSubmission = submissions[0] ?? null;
     const gradeIds = Array.from(
       new Set(
@@ -293,16 +299,16 @@ export class StudentService {
       title: assignment.title,
       courseName: 'UML Grading',
       description: assignment.description ?? '',
-      instructions: [
-        'Submit a UMLet UXF file for automated grading, or upload an image for manual/future image-based grading.',
-        'Make sure classes, attributes, methods, and relationships match the expected task.',
-      ],
-      requiredDiagramType: 'UML class diagram',
-      submissionFormatRules: [
-        'UXF/XML files are auto-graded now',
-        'PNG/JPEG image submissions are stored for future image-based grading',
-        'One file per submission',
-      ],
+      instructions: this.getSubmissionInstructions(submissionMode),
+      requiredDiagramType:
+        submissionMode === 'image'
+          ? 'UML class diagram screenshot'
+          : 'UMLet UXF/XML class diagram',
+      submissionMode,
+      acceptedFileTypes: this.getAcceptedFileTypes(submissionMode),
+      acceptedFileExtensions: this.getAcceptedFileExtensions(submissionMode),
+      uploadPrompt: this.getUploadPrompt(submissionMode),
+      submissionFormatRules: this.getSubmissionFormatRules(submissionMode),
       namingGuidance:
         'Use clear and consistent class, method, and attribute names to match the expected structure.',
       markingNote:
@@ -429,6 +435,13 @@ export class StudentService {
     }
 
     const mimeType = this.validateSubmissionInput(input);
+    const primarySolution = await this.getPrimarySolution(assignment._id);
+    if (!primarySolution) {
+      throw new ForbiddenException(
+        'This assignment does not have a reference solution yet.',
+      );
+    }
+    this.validateSubmissionMatchesSolution(mimeType, primarySolution.mimeType);
 
     const latestSubmission = await this.submissionModel
       .findOne({ assignmentId: assignment._id, studentId })
@@ -465,17 +478,12 @@ export class StudentService {
       submittedAt: now,
     });
 
-    await this.gradeSubmission(created, assignment, studentId);
-
-    const graded = await this.submissionModel.findById(created._id).lean();
+    void this.gradeSubmission(created, assignment, studentId);
 
     return {
-      message: 'Submission uploaded and graded successfully.',
+      message: 'Submission uploaded. Grading is running in the background.',
       submissionId: created._id.toString(),
-      status: this.mapSubmissionStatus(
-        graded?.status,
-        Boolean(graded?.latestGradeId),
-      ),
+      status: 'processing',
       submittedAt: (created.submittedAt ?? created.createdAt).toISOString(),
     };
   }
@@ -485,44 +493,41 @@ export class StudentService {
     assignment: AssignmentDocument,
     studentId: Types.ObjectId,
   ) {
-    if (!this.isTextUmlMimeType(submission.mimeType)) {
-      await this.submissionModel.updateOne(
-        { _id: submission._id },
-        {
-          status: 'submitted',
-          extractionError:
-            'Image-based grading is not implemented yet. The submission was stored for future image-based evaluation.',
-        },
-      );
-      return;
-    }
-
-    const solution = await this.solutionModel
-      .findOne({
-        assignmentId: assignment._id,
-        mimeType: { $in: ['application/uxf', 'application/xml', 'text/xml'] },
-      })
-      .sort({ createdAt: 1 })
-      .lean();
+    const solution = await this.getPrimarySolution(assignment._id);
 
     if (!solution) {
       await this.markSubmissionFailed(
         submission._id,
-        'No UXF/XML reference solution is available for automatic grading. Image-based grading is not implemented yet.',
+        'No reference solution is available for automatic grading.',
       );
       return;
     }
 
     try {
-      const graderResult = await this.callGrader({
+      this.validateSubmissionMatchesSolution(
+        submission.mimeType,
+        solution.mimeType,
+      );
+      const commonPayload = {
         assignmentId: assignment._id.toString(),
         submissionId: submission._id.toString(),
         solutionId: solution._id.toString(),
-        solutionUxf: this.dataUrlToText(solution.imageUrl),
-        submissionUxf: this.dataUrlToText(submission.imageUrl),
-        synonymsMap: Object.fromEntries(assignment.synonymsMap ?? []),
         maxScore: assignment.totalMarks,
-      });
+      };
+      const graderResult =
+        this.isTextUmlMimeType(solution.mimeType) &&
+        this.isTextUmlMimeType(submission.mimeType)
+          ? await this.callGrader({
+              ...commonPayload,
+              solutionUxf: this.dataUrlToText(solution.imageUrl),
+              submissionUxf: this.dataUrlToText(submission.imageUrl),
+              synonymsMap: Object.fromEntries(assignment.synonymsMap ?? []),
+            })
+          : await this.callImageGrader({
+              ...commonPayload,
+              solutionImageDataUrl: solution.imageUrl,
+              submissionImageDataUrl: submission.imageUrl,
+            });
 
       const grade = await this.gradeModel.create({
         submissionId: submission._id,
@@ -536,7 +541,9 @@ export class StudentService {
         chosenSolutionLabel: solution.label,
         discrepancies: graderResult.discrepancies ?? [],
         flags: graderResult.flags ?? {},
-        gradingVersion: 'local-ollama-v1',
+        gradingVersion: this.isImageMimeType(solution.mimeType)
+          ? 'local-ollama-vision-v1'
+          : 'local-ollama-v1',
         graderModelName: this.getGraderBaseUrl(),
       });
 
@@ -586,6 +593,40 @@ export class StudentService {
 
     if (!this.isValidGraderResponse(body)) {
       throw new Error('Grader service returned an invalid grade response.');
+    }
+
+    return body;
+  }
+
+  private async callImageGrader(payload: {
+    assignmentId: string;
+    submissionId: string;
+    solutionId: string;
+    solutionImageDataUrl: string;
+    submissionImageDataUrl: string;
+    maxScore: number;
+  }): Promise<GraderGradeResponse> {
+    const response = await fetch(`${this.getGraderBaseUrl()}/grade-images`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    const body = (await response.json().catch(() => null)) as
+      | GraderGradeResponse
+      | { message?: unknown }
+      | null;
+
+    if (!response.ok) {
+      const message =
+        body && typeof body === 'object' && 'message' in body
+          ? String(body.message)
+          : response.statusText;
+      throw new Error(`Image grader service failed: ${message}`);
+    }
+
+    if (!this.isValidGraderResponse(body)) {
+      throw new Error('Image grader service returned an invalid grade response.');
     }
 
     return body;
@@ -1120,6 +1161,126 @@ export class StudentService {
     );
   }
 
+  private getPrimarySolution(assignmentId: Types.ObjectId) {
+    return this.solutionModel
+      .findOne({ assignmentId })
+      .sort({ createdAt: 1 })
+      .lean();
+  }
+
+  private validateSubmissionMatchesSolution(
+    submissionMimeType: string,
+    solutionMimeType: string,
+  ) {
+    if (this.isTextUmlMimeType(solutionMimeType)) {
+      if (!this.isTextUmlMimeType(submissionMimeType)) {
+        throw new BadRequestException(
+          'This assignment expects a UMLet UXF/XML file because the teacher reference solution is UXF/XML.',
+        );
+      }
+      return;
+    }
+
+    if (this.isImageMimeType(solutionMimeType)) {
+      if (!this.isImageMimeType(submissionMimeType)) {
+        throw new BadRequestException(
+          'This assignment expects a PNG or JPEG screenshot because the teacher reference solution is an image.',
+        );
+      }
+      return;
+    }
+
+    throw new BadRequestException(
+      'The teacher reference solution uses an unsupported file type.',
+    );
+  }
+
+  private getSubmissionModeFromSolution(
+    solution?: { mimeType?: string } | null,
+  ): SubmissionMode {
+    if (!solution) {
+      return 'unknown';
+    }
+    if (this.isTextUmlMimeType(solution.mimeType)) {
+      return 'uxf';
+    }
+    if (this.isImageMimeType(solution.mimeType)) {
+      return 'image';
+    }
+    return 'unknown';
+  }
+
+  private getSubmissionInstructions(mode: SubmissionMode) {
+    if (mode === 'image') {
+      return [
+        'Submit a clear PNG or JPEG screenshot of your UMLet class diagram.',
+        'Make sure class names, attributes, methods, relationships, arrowheads, and multiplicities are readable.',
+      ];
+    }
+
+    if (mode === 'uxf') {
+      return [
+        'Submit the UMLet UXF/XML file for automated structural grading.',
+        'Make sure classes, attributes, methods, and relationships match the expected task.',
+      ];
+    }
+
+    return [
+      'The teacher has not uploaded a supported reference solution yet.',
+      'Submission requirements will appear here once the assignment is ready.',
+    ];
+  }
+
+  private getSubmissionFormatRules(mode: SubmissionMode) {
+    if (mode === 'image') {
+      return [
+        'PNG/JPEG screenshots are required for this assignment',
+        'UXF/XML files are not accepted for this assignment',
+        'One file per submission',
+      ];
+    }
+
+    if (mode === 'uxf') {
+      return [
+        'UXF/XML files are required for this assignment',
+        'PNG/JPEG screenshots are not accepted for this assignment',
+        'One file per submission',
+      ];
+    }
+
+    return ['No supported reference solution is available yet'];
+  }
+
+  private getAcceptedFileTypes(mode: SubmissionMode) {
+    if (mode === 'image') {
+      return '.png,.jpg,.jpeg,image/png,image/jpeg';
+    }
+    if (mode === 'uxf') {
+      return '.uxf,.xml,application/uxf,application/xml,text/xml';
+    }
+    return '.uxf,.xml,.png,.jpg,.jpeg,application/uxf,application/xml,text/xml,image/png,image/jpeg';
+  }
+
+  private getAcceptedFileExtensions(mode: SubmissionMode) {
+    if (mode === 'image') {
+      return ['.png', '.jpg', '.jpeg'];
+    }
+    if (mode === 'uxf') {
+      return ['.uxf', '.xml'];
+    }
+    return ['.uxf', '.xml', '.png', '.jpg', '.jpeg'];
+  }
+
+  private getUploadPrompt(mode: SubmissionMode) {
+    if (mode === 'image') {
+      return 'Upload a PNG or JPEG screenshot. UXF/XML is disabled because the teacher reference is an image.';
+    }
+    if (mode === 'uxf') {
+      return 'Upload a UMLet UXF/XML file. Images are disabled because the teacher reference is UXF/XML.';
+    }
+    return 'Upload requirements are unavailable because no supported reference solution was found.';
+  }
+
   private validateSubmissionInput(input: CreateSubmissionInput) {
     if (!input.originalFileName?.trim()) {
       throw new BadRequestException('originalFileName is required.');
@@ -1165,9 +1326,9 @@ export class StudentService {
 
     if (
       this.isTextUmlMimeType(mimeType) ||
-      ['image/png', 'image/jpeg'].includes(mimeType)
+      ['image/png', 'image/jpeg', 'image/jpg'].includes(mimeType)
     ) {
-      return mimeType;
+      return mimeType === 'image/jpg' ? 'image/jpeg' : mimeType;
     }
 
     if (fileName.endsWith('.uxf')) {
@@ -1193,6 +1354,10 @@ export class StudentService {
     return ['application/uxf', 'application/xml', 'text/xml'].includes(
       mimeType ?? '',
     );
+  }
+
+  private isImageMimeType(mimeType?: string) {
+    return ['image/png', 'image/jpeg', 'image/jpg'].includes(mimeType ?? '');
   }
 
   private getStudentObjectId(user?: RequestUser) {

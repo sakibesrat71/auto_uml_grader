@@ -8,6 +8,15 @@ export interface GradeRequest {
   maxScore: number;
 }
 
+export interface GradeImagesRequest {
+  assignmentId: string;
+  submissionId?: string;
+  solutionId?: string;
+  solutionImageDataUrl: string;
+  submissionImageDataUrl: string;
+  maxScore: number;
+}
+
 export interface RubricBreakdownItem {
   criterionKey: string;
   label: string;
@@ -48,4 +57,5 @@ export interface GraderHealthResponse {
   service: 'uml-grader';
   ollamaBaseUrl: string;
   ollamaModel: string;
+  ollamaVisionModel: string;
 }

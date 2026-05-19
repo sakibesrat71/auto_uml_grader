@@ -56,6 +56,35 @@ interface OverrideSubmissionGradeInput {
   comment?: string;
 }
 
+interface GraderGradeResponse {
+  score: number;
+  maxScore: number;
+  percentage: number;
+  summary: string;
+  rubricBreakdown: {
+    criterionKey: string;
+    label: string;
+    maxMarks: number;
+    awardedMarks: number;
+    reason?: string;
+  }[];
+  discrepancies: {
+    category: string;
+    severity: string;
+    message: string;
+    expected?: string;
+    actual?: string;
+    entityRef?: string;
+  }[];
+  flags: {
+    lowConfidence: boolean;
+    extractionIssues: boolean;
+    invalidJsonRecovered: boolean;
+    manualReviewRecommended: boolean;
+    notes: string[];
+  };
+}
+
 interface UploadedSolutionFile {
   originalname: string;
   mimetype: string;
@@ -342,6 +371,7 @@ export class TeacherAssignmentsService {
     }
 
     const mimeType = this.normalizeAndValidateSolutionMimeType(file);
+    await this.validateSolutionModeForAssignment(assignment._id, mimeType);
     const solution = await this.solutionModel.create({
       assignmentId: assignment._id,
       label: input.label.trim(),
@@ -395,6 +425,11 @@ export class TeacherAssignmentsService {
     }
 
     const mimeType = this.normalizeAndValidateSolutionMimeType(file);
+    await this.validateSolutionModeForAssignment(
+      assignment._id,
+      mimeType,
+      solution._id,
+    );
     solution.label = input.label?.trim() || solution.label;
     solution.originalFileName = file.originalname;
     solution.mimeType = mimeType;
@@ -618,6 +653,124 @@ export class TeacherAssignmentsService {
     };
   }
 
+  async regradeSubmission(
+    user: RequestUser | undefined,
+    assignmentId: string,
+    submissionId: string,
+  ) {
+    const teacherId = this.getTeacherObjectId(user);
+    const assignment = await this.assignmentModel.findById(
+      this.toObjectId(assignmentId, 'assignmentId'),
+    );
+    if (!assignment) {
+      throw new NotFoundException('Assignment not found.');
+    }
+    if (assignment.teacherId.toString() !== teacherId.toString()) {
+      throw new ForbiddenException(
+        'You can only regrade submissions for your own assignments.',
+      );
+    }
+
+    const submission = await this.submissionModel.findOne({
+      _id: this.toObjectId(submissionId, 'submissionId'),
+      assignmentId: assignment._id,
+    });
+    if (!submission) {
+      throw new NotFoundException('Submission not found.');
+    }
+
+    await this.submissionModel.updateOne(
+      { _id: submission._id },
+      {
+        $set: { status: 'processing' },
+        $unset: { extractionError: 1, latestGradeId: 1 },
+      },
+    );
+
+    void this.gradeSubmissionForTeacher(assignment, submission).catch(
+      async (error: unknown) => {
+        const reason =
+          error instanceof Error ? error.message : 'Regrading failed.';
+        await this.markSubmissionFailed(submission._id, reason);
+      },
+    );
+
+    return {
+      message: 'Regrading started.',
+      assignmentId: assignment._id.toString(),
+      submissionId: submission._id.toString(),
+      status: 'processing',
+    };
+  }
+
+  private async gradeSubmissionForTeacher(
+    assignment: AssignmentDocument,
+    submission: SubmissionDocument,
+  ) {
+    const solution = await this.solutionModel
+      .findOne({ assignmentId: assignment._id })
+      .sort({ createdAt: 1 })
+      .lean();
+
+    if (!solution) {
+      throw new Error('No reference solution is available for automatic grading.');
+    }
+
+    this.validateSubmissionMatchesSolution(submission.mimeType, solution.mimeType);
+
+    const commonPayload = {
+      assignmentId: assignment._id.toString(),
+      submissionId: submission._id.toString(),
+      solutionId: solution._id.toString(),
+      maxScore: assignment.totalMarks,
+    };
+    const graderResult =
+      this.isTextUmlMimeType(solution.mimeType) &&
+      this.isTextUmlMimeType(submission.mimeType)
+        ? await this.callGrader({
+            ...commonPayload,
+            solutionUxf: this.dataUrlToText(solution.imageUrl),
+            submissionUxf: this.dataUrlToText(submission.imageUrl),
+            synonymsMap: Object.fromEntries(assignment.synonymsMap ?? []),
+          })
+        : await this.callImageGrader({
+            ...commonPayload,
+            solutionImageDataUrl: solution.imageUrl,
+            submissionImageDataUrl: submission.imageUrl,
+          });
+
+    const grade = await this.gradeModel.create({
+      submissionId: submission._id,
+      assignmentId: assignment._id,
+      studentId: submission.studentId,
+      score: graderResult.score,
+      maxScore: graderResult.maxScore,
+      percentage: graderResult.percentage,
+      rubricBreakdown: graderResult.rubricBreakdown ?? [],
+      chosenSolutionId: solution._id,
+      chosenSolutionLabel: solution.label,
+      discrepancies: graderResult.discrepancies ?? [],
+      flags: graderResult.flags ?? {},
+      gradingVersion: this.isImageMimeType(solution.mimeType)
+        ? 'local-ollama-vision-v1'
+        : 'local-ollama-v1',
+      graderModelName: this.getGraderBaseUrl(),
+    });
+
+    await this.submissionModel.updateOne(
+      { _id: submission._id },
+      {
+        $set: {
+          status: 'graded',
+          latestGradeId: grade._id,
+        },
+        $unset: { extractionError: 1 },
+      },
+    );
+
+    return grade;
+  }
+
   private mapAssignmentResponse(assignment: AssignmentDocument) {
     return {
       assignmentId: assignment._id.toString(),
@@ -691,7 +844,7 @@ export class TeacherAssignmentsService {
     assignment: AssignmentDocument,
     submission: SubmissionDocument,
     grade: GradeDocument | undefined,
-    studentMap: Map<string, string>,
+    studentMap: Map<string, { fullName: string; email: string }>,
     solutionSlotMap: Map<string, string>,
     solutionLabelMap: Map<string, string>,
   ) {
@@ -712,10 +865,12 @@ export class TeacherAssignmentsService {
     const confidenceScore = this.getConfidenceScore(submission, grade);
     const synonymMatches = this.getSynonymMatches(grade);
 
+    const student = studentMap.get(submission.studentId.toString());
+
     return {
       submissionId: submission._id.toString(),
-      studentName:
-        studentMap.get(submission.studentId.toString()) ?? 'Unknown Student',
+      studentName: student?.fullName ?? 'Unknown Student',
+      studentEmail: student?.email ?? '',
       studentId: submission.studentId.toString(),
       submittedAt: submittedAt.toISOString(),
       status,
@@ -1148,14 +1303,17 @@ export class TeacherAssignmentsService {
 
   private async getStudentMap(studentIds: string[]) {
     if (studentIds.length === 0) {
-      return new Map<string, string>();
+      return new Map<string, { fullName: string; email: string }>();
     }
     const students = await this.userModel
       .find({ _id: { $in: studentIds } })
-      .select({ _id: 1, fullName: 1 })
+      .select({ _id: 1, fullName: 1, email: 1 })
       .lean();
     return new Map(
-      students.map((student) => [student._id.toString(), student.fullName]),
+      students.map((student) => [
+        student._id.toString(),
+        { fullName: student.fullName, email: student.email },
+      ]),
     );
   }
 
@@ -1405,8 +1563,177 @@ export class TeacherAssignmentsService {
     };
   }
 
+  private validateSubmissionMatchesSolution(
+    submissionMimeType: string,
+    solutionMimeType: string,
+  ) {
+    if (this.isTextUmlMimeType(solutionMimeType)) {
+      if (!this.isTextUmlMimeType(submissionMimeType)) {
+        throw new Error(
+          'This assignment expects a UMLet UXF/XML file because the teacher reference solution is UXF/XML.',
+        );
+      }
+      return;
+    }
+
+    if (this.isImageMimeType(solutionMimeType)) {
+      if (!this.isImageMimeType(submissionMimeType)) {
+        throw new Error(
+          'This assignment expects a PNG or JPEG screenshot because the teacher reference solution is an image.',
+        );
+      }
+      return;
+    }
+
+    throw new Error('The teacher reference solution uses an unsupported file type.');
+  }
+
+  private async callGrader(payload: {
+    assignmentId: string;
+    submissionId: string;
+    solutionId: string;
+    solutionUxf: string;
+    submissionUxf: string;
+    synonymsMap: Record<string, string[]>;
+    maxScore: number;
+  }): Promise<GraderGradeResponse> {
+    const response = await fetch(`${this.getGraderBaseUrl()}/grade`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    const body = (await response.json().catch(() => null)) as
+      | GraderGradeResponse
+      | { message?: unknown }
+      | null;
+
+    if (!response.ok) {
+      const message =
+        body && typeof body === 'object' && 'message' in body
+          ? String(body.message)
+          : response.statusText;
+      throw new Error(`Grader service failed: ${message}`);
+    }
+
+    if (!this.isValidGraderResponse(body)) {
+      throw new Error('Grader service returned an invalid grade response.');
+    }
+
+    return body;
+  }
+
+  private async callImageGrader(payload: {
+    assignmentId: string;
+    submissionId: string;
+    solutionId: string;
+    solutionImageDataUrl: string;
+    submissionImageDataUrl: string;
+    maxScore: number;
+  }): Promise<GraderGradeResponse> {
+    const response = await fetch(`${this.getGraderBaseUrl()}/grade-images`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    const body = (await response.json().catch(() => null)) as
+      | GraderGradeResponse
+      | { message?: unknown }
+      | null;
+
+    if (!response.ok) {
+      const message =
+        body && typeof body === 'object' && 'message' in body
+          ? String(body.message)
+          : response.statusText;
+      throw new Error(`Image grader service failed: ${message}`);
+    }
+
+    if (!this.isValidGraderResponse(body)) {
+      throw new Error('Image grader service returned an invalid grade response.');
+    }
+
+    return body;
+  }
+
+  private isValidGraderResponse(value: unknown): value is GraderGradeResponse {
+    if (!value || typeof value !== 'object') {
+      return false;
+    }
+    const candidate = value as Partial<GraderGradeResponse>;
+    return (
+      Number.isFinite(candidate.score) &&
+      Number.isFinite(candidate.maxScore) &&
+      Number.isFinite(candidate.percentage) &&
+      Array.isArray(candidate.rubricBreakdown) &&
+      Array.isArray(candidate.discrepancies) &&
+      Boolean(candidate.flags)
+    );
+  }
+
+  private async markSubmissionFailed(
+    submissionId: Types.ObjectId,
+    reason: string,
+  ) {
+    await this.submissionModel.updateOne(
+      { _id: submissionId },
+      {
+        $set: {
+          status: 'failed',
+          extractionError: reason,
+        },
+        $unset: { latestGradeId: 1 },
+      },
+    );
+  }
+
+  private dataUrlToText(dataUrl: string) {
+    const match = dataUrl.match(/^data:[^;]*;base64,(.+)$/);
+    if (!match?.[1]) {
+      throw new Error('Stored UXF data URL is invalid.');
+    }
+
+    return Buffer.from(match[1], 'base64').toString('utf8');
+  }
+
+  private getGraderBaseUrl() {
+    return (
+      this.configService.get<string>('GRADER_BASE_URL') ??
+      'http://127.0.0.1:4100'
+    ).replace(/\/$/, '');
+  }
+
   private isValidEmail(email: string) {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  }
+
+  private async validateSolutionModeForAssignment(
+    assignmentId: Types.ObjectId,
+    newMimeType: string,
+    replacingSolutionId?: Types.ObjectId,
+  ) {
+    const existingSolution = await this.solutionModel
+      .findOne({
+        assignmentId,
+        ...(replacingSolutionId
+          ? { _id: { $ne: replacingSolutionId } }
+          : {}),
+      })
+      .sort({ createdAt: 1 })
+      .lean();
+
+    if (!existingSolution) {
+      return;
+    }
+
+    const existingMode = this.getSolutionMode(existingSolution.mimeType);
+    const newMode = this.getSolutionMode(newMimeType);
+    if (existingMode !== newMode) {
+      throw new BadRequestException(
+        'All reference solutions for one assignment must use the same format: either UXF/XML or PNG/JPEG images.',
+      );
+    }
   }
 
   private normalizeAndValidateSolutionMimeType(file: UploadedSolutionFile) {
@@ -1434,9 +1761,37 @@ export class TeacherAssignmentsService {
       return 'application/uxf';
     }
 
+    if (fileName.endsWith('.png')) {
+      return 'image/png';
+    }
+
+    if (fileName.endsWith('.jpg') || fileName.endsWith('.jpeg')) {
+      return 'image/jpeg';
+    }
+
     throw new BadRequestException(
       'Solution files must be PNG, JPEG, XML, or UXF.',
     );
+  }
+
+  private getSolutionMode(mimeType: string) {
+    if (this.isTextUmlMimeType(mimeType)) {
+      return 'uxf';
+    }
+    if (this.isImageMimeType(mimeType)) {
+      return 'image';
+    }
+    return 'unknown';
+  }
+
+  private isTextUmlMimeType(mimeType?: string) {
+    return ['application/uxf', 'application/xml', 'text/xml'].includes(
+      mimeType ?? '',
+    );
+  }
+
+  private isImageMimeType(mimeType?: string) {
+    return ['image/png', 'image/jpeg', 'image/jpg'].includes(mimeType ?? '');
   }
 
   private fileBufferToDataUrl(buffer: Buffer, mimeType: string) {

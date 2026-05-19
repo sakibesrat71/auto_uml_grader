@@ -7,6 +7,7 @@ import {
 } from './contracts/comparison.contract';
 import {
   DiscrepancyItem,
+  GradeImagesRequest,
   GradeRequest,
   GradeResponse,
   GraderHealthResponse,
@@ -33,6 +34,8 @@ export class AppService {
         'http://127.0.0.1:11434',
       ollamaModel:
         this.configService.get<string>('OLLAMA_MODEL') ?? 'qwen2.5:3b-instruct',
+      ollamaVisionModel:
+        this.configService.get<string>('OLLAMA_VISION_MODEL') ?? 'gemma3:4b',
     };
   }
 
@@ -76,6 +79,47 @@ export class AppService {
       request.maxScore,
       'Ollama grading disabled by GRADER_USE_OLLAMA=false.',
     );
+  }
+
+  async gradeImages(request: GradeImagesRequest): Promise<GradeResponse> {
+    this.validateGradeImagesRequest(request);
+
+    try {
+      return await this.ollamaGradingService.gradeImages({
+        solutionImageDataUrl: request.solutionImageDataUrl,
+        submissionImageDataUrl: request.submissionImageDataUrl,
+        maxScore: request.maxScore,
+      });
+    } catch (error) {
+      return {
+        score: 0,
+        maxScore: request.maxScore,
+        percentage: 0,
+        summary:
+          'Image grading could not be completed automatically. Manual review is required.',
+        rubricBreakdown: this.buildUnavailableImageRubric(request.maxScore),
+        discrepancies: [
+          {
+            category: 'image_grading_unavailable',
+            severity: 'critical',
+            message:
+              error instanceof Error
+                ? error.message
+                : 'Unknown image grading error.',
+          },
+        ],
+        flags: {
+          lowConfidence: true,
+          extractionIssues: true,
+          invalidJsonRecovered: false,
+          manualReviewRecommended: true,
+          notes: [
+            'Image grading requires a vision-capable Ollama model.',
+            'Set OLLAMA_VISION_MODEL to a model with the vision capability, such as gemma3:4b.',
+          ],
+        },
+      };
+    }
   }
 
   private buildFallbackGrade(
@@ -234,6 +278,48 @@ export class AppService {
             : this.hasRelationshipTypeMismatch(comparison)
               ? 'At least one relationship used a different UML relationship type.'
               : 'Submission relationships were linkable to classes.',
+      },
+    ];
+  }
+
+  private buildUnavailableImageRubric(
+    maxScore: number,
+  ): GradeResponse['rubricBreakdown'] {
+    return [
+      {
+        criterionKey: 'class_coverage',
+        label: 'Class coverage',
+        maxMarks: this.roundScore(maxScore * 0.3),
+        awardedMarks: 0,
+        reason: 'Image grading did not complete.',
+      },
+      {
+        criterionKey: 'attributes_methods',
+        label: 'Attributes and methods',
+        maxMarks: this.roundScore(maxScore * 0.2),
+        awardedMarks: 0,
+        reason: 'Image grading did not complete.',
+      },
+      {
+        criterionKey: 'relationships',
+        label: 'Relationships',
+        maxMarks: this.roundScore(maxScore * 0.3),
+        awardedMarks: 0,
+        reason: 'Image grading did not complete.',
+      },
+      {
+        criterionKey: 'semantic_equivalence',
+        label: 'Semantic equivalence',
+        maxMarks: this.roundScore(maxScore * 0.1),
+        awardedMarks: 0,
+        reason: 'Image grading did not complete.',
+      },
+      {
+        criterionKey: 'uml_clarity',
+        label: 'UML correctness and clarity',
+        maxMarks: this.roundScore(maxScore * 0.1),
+        awardedMarks: 0,
+        reason: 'Image grading did not complete.',
       },
     ];
   }
@@ -429,6 +515,40 @@ export class AppService {
       !request.submissionUxf.trim()
     ) {
       throw new BadRequestException('submissionUxf is required.');
+    }
+
+    if (!Number.isFinite(request.maxScore) || request.maxScore <= 0) {
+      throw new BadRequestException('maxScore must be a positive number.');
+    }
+  }
+
+  private validateGradeImagesRequest(request: GradeImagesRequest) {
+    if (!request || typeof request !== 'object') {
+      throw new BadRequestException('Request body is required.');
+    }
+
+    if (!request.assignmentId?.trim()) {
+      throw new BadRequestException('assignmentId is required.');
+    }
+
+    if (
+      typeof request.solutionImageDataUrl !== 'string' ||
+      !request.solutionImageDataUrl.startsWith('data:image/') ||
+      !request.solutionImageDataUrl.includes(';base64,')
+    ) {
+      throw new BadRequestException(
+        'solutionImageDataUrl must be an image data URL.',
+      );
+    }
+
+    if (
+      typeof request.submissionImageDataUrl !== 'string' ||
+      !request.submissionImageDataUrl.startsWith('data:image/') ||
+      !request.submissionImageDataUrl.includes(';base64,')
+    ) {
+      throw new BadRequestException(
+        'submissionImageDataUrl must be an image data URL.',
+      );
     }
 
     if (!Number.isFinite(request.maxScore) || request.maxScore <= 0) {

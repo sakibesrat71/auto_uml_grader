@@ -1,7 +1,10 @@
 import { Body, Controller, Get, Post } from '@nestjs/common';
 import { AppService } from './app.service';
 import type { CompareDiagramsRequest } from './contracts/comparison.contract';
-import type { GradeRequest } from './contracts/grading.contract';
+import type {
+  GradeImagesRequest,
+  GradeRequest,
+} from './contracts/grading.contract';
 import type { ParseUxfRequest } from './contracts/uml.contract';
 
 @Controller()
@@ -16,6 +19,11 @@ export class AppController {
   @Post('grade')
   async grade(@Body() request: GradeRequest) {
     return this.appService.grade(request);
+  }
+
+  @Post('grade-images')
+  async gradeImages(@Body() request: GradeImagesRequest) {
+    return this.appService.gradeImages(request);
   }
 
   @Post('parse-uxf')
