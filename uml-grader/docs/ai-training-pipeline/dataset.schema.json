@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "UML Grader Training Sample",
+  "type": "object",
+  "required": [
+    "sampleId",
+    "assignmentType",
+    "input",
+    "expectedOutput",
+    "metadata"
+  ],
+  "properties": {
+    "sampleId": {
+      "type": "string"
+    },
+    "assignmentType": {
+      "enum": ["uxf", "image"]
+    },
+    "input": {
+      "type": "object",
+      "required": ["teacherReference", "studentSubmission", "maxScore"],
+      "properties": {
+        "teacherReference": {
+          "type": "string"
+        },
+        "studentSubmission": {
+          "type": "string"
+        },
+        "deterministicEvidence": {
+          "type": "object"
+        },
+        "synonymsMap": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "maxScore": {
+          "type": "number",
+          "minimum": 1
+        }
+      }
+    },
+    "expectedOutput": {
+      "type": "object",
+      "required": [
+        "scoreBand",
+        "rubricBreakdown",
+        "keyIssues",
+        "feedbackSummary",
+        "manualReviewRecommended"
+      ],
+      "properties": {
+        "scoreBand": {
+          "type": "object",
+          "required": ["min", "max"],
+          "properties": {
+            "min": {
+              "type": "number"
+            },
+            "max": {
+              "type": "number"
+            }
+          }
+        },
+        "rubricBreakdown": {
+          "type": "array"
+        },
+        "keyIssues": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "feedbackSummary": {
+          "type": "string"
+        },
+        "manualReviewRecommended": {
+          "type": "boolean"
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "createdBy": {
+          "type": "string"
+        },
+        "reviewedByTeacher": {
+          "type": "boolean"
+        },
+        "split": {
+          "enum": ["train", "validation", "test"]
+        }
+      }
+    }
+  }
+}
+

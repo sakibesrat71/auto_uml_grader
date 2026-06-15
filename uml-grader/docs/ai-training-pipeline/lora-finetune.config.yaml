@@ -1,0 +1,43 @@
+# Example supervised fine-tuning configuration for a UML grading LLM.
+# This is a planning artifact and is not required by the production app.
+
+base_model: qwen2.5:3b-instruct
+adapter: lora
+task_type: causal_lm
+
+dataset:
+  train_file: finetune-chat.generated.jsonl
+  validation_split: validation
+  input_format: chat_jsonl
+
+training:
+  epochs: 3
+  learning_rate: 0.0002
+  batch_size: 2
+  gradient_accumulation_steps: 8
+  max_sequence_length: 8192
+  warmup_ratio: 0.05
+  weight_decay: 0.01
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+
+evaluation:
+  primary_metric: score_band_accuracy
+  secondary_metrics:
+    - discrepancy_recall
+    - rubric_total_consistency
+    - manual_review_precision
+    - confidence_calibration
+
+deployment:
+  export_format: ollama_adapter
+  expected_api_schema: apps/grader/src/contracts/grading.contract.ts
+
