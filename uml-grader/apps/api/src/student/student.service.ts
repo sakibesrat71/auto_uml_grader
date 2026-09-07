@@ -540,12 +540,12 @@ export class StudentService {
         chosenSolutionId: solution._id,
         chosenSolutionLabel: solution.label,
         discrepancies: graderResult.discrepancies ?? [],
-        flags: graderResult.flags ?? {},
-        gradingVersion: this.isImageMimeType(solution.mimeType)
-          ? 'local-ollama-vision-v1'
-          : 'local-ollama-v1',
-        graderModelName: this.getGraderBaseUrl(),
-      });
+      flags: graderResult.flags ?? {},
+      gradingVersion: this.isImageMimeType(solution.mimeType)
+        ? 'gemini-vision-v1'
+        : 'gemini-text-v1',
+      graderModelName: this.getGraderBaseUrl(),
+    });
 
       await this.submissionModel.updateOne(
         { _id: submission._id },

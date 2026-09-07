@@ -752,8 +752,8 @@ export class TeacherAssignmentsService {
       discrepancies: graderResult.discrepancies ?? [],
       flags: graderResult.flags ?? {},
       gradingVersion: this.isImageMimeType(solution.mimeType)
-        ? 'local-ollama-vision-v1'
-        : 'local-ollama-v1',
+        ? 'gemini-vision-v1'
+        : 'gemini-text-v1',
       graderModelName: this.getGraderBaseUrl(),
     });
 

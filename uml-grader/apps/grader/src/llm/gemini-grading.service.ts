@@ -7,21 +7,31 @@ import type {
   RubricBreakdownItem,
 } from '../contracts/grading.contract';
 
-interface GradeWithOllamaInput {
+interface GradeWithGeminiInput {
   comparison: DiagramComparison;
   deterministicDiscrepancies: DiscrepancyItem[];
   maxScore: number;
 }
 
-interface GradeImagesWithOllamaInput {
+interface GradeImagesWithGeminiInput {
   solutionImageDataUrl: string;
   submissionImageDataUrl: string;
   maxScore: number;
 }
 
-interface OllamaGenerateResponse {
-  response?: string;
-  model?: string;
+interface GeminiGenerateResponse {
+  candidates?: Array<{
+    content?: {
+      parts?: Array<{
+        text?: string;
+      }>;
+    };
+  }>;
+  error?: {
+    code?: number;
+    message?: string;
+    status?: string;
+  };
 }
 
 interface LlmGradePayload {
@@ -42,10 +52,10 @@ interface ScoreGuidance {
 }
 
 @Injectable()
-export class OllamaGradingService {
+export class GeminiGradingService {
   constructor(private readonly configService: ConfigService) {}
 
-  async grade(input: GradeWithOllamaInput): Promise<GradeResponse> {
+  async grade(input: GradeWithGeminiInput): Promise<GradeResponse> {
     const payload = await this.generateGrade(input);
     const scoreGuidance = this.buildScoreGuidance(
       input.comparison,
@@ -85,7 +95,7 @@ export class OllamaGradingService {
         manualReviewRecommended:
           payload.manualReviewRecommended || confidence < 0.65,
         notes: [
-          `Ollama model: ${this.getModelName()}.`,
+          `Gemini model: ${this.getModelName()}.`,
           `LLM confidence: ${this.round(confidence * 100)}%.`,
           `Deterministic score anchor: ${scoreGuidance.anchorScore}/${input.maxScore}.`,
           ...adjustmentNote,
@@ -96,7 +106,7 @@ export class OllamaGradingService {
   }
 
   async gradeImages(
-    input: GradeImagesWithOllamaInput,
+    input: GradeImagesWithGeminiInput,
   ): Promise<GradeResponse> {
     const payload = await this.generateImageGrade(input);
     const score = this.clamp(this.round(payload.score), 0, input.maxScore);
@@ -120,7 +130,7 @@ export class OllamaGradingService {
         manualReviewRecommended:
           payload.manualReviewRecommended || confidence < 0.7,
         notes: [
-          `Ollama vision model: ${this.getVisionModelName()}.`,
+          `Gemini vision model: ${this.getModelName()}.`,
           `Vision grading confidence: ${this.round(confidence * 100)}%.`,
           ...payload.notes.map((item) => item.trim()).filter(Boolean),
         ],
@@ -129,73 +139,64 @@ export class OllamaGradingService {
   }
 
   private async generateImageGrade(
-    input: GradeImagesWithOllamaInput,
+    input: GradeImagesWithGeminiInput,
   ): Promise<LlmGradePayload> {
-    let response: Response;
-    try {
-      response = await fetch(`${this.getBaseUrl()}/api/generate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: this.getVisionModelName(),
-          prompt: this.buildImagePrompt(input.maxScore),
-          images: [
-            this.dataUrlToBase64(input.solutionImageDataUrl),
-            this.dataUrlToBase64(input.submissionImageDataUrl),
-          ],
-          stream: false,
-          format: this.getResponseSchema(input.maxScore),
-          options: {
-            temperature: 0.1,
-            top_p: 0.9,
-          },
-        }),
-      });
-    } catch (error) {
-      throw new Error(
-        `Could not connect to Ollama at ${this.getBaseUrl()}: ${
-          error instanceof Error ? error.message : 'fetch failed'
-        }`,
-      );
-    }
+    const solutionImage = this.dataUrlToInlineData(input.solutionImageDataUrl);
+    const submissionImage = this.dataUrlToInlineData(
+      input.submissionImageDataUrl,
+    );
+    const generatedText = await this.generateContent([
+      { text: this.buildImagePrompt(input.maxScore) },
+      { inline_data: solutionImage },
+      { inline_data: submissionImage },
+    ], input.maxScore);
 
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(
-        `Ollama vision request failed with ${response.status}: ${text || response.statusText}`,
-      );
-    }
-
-    const generated = (await response.json()) as OllamaGenerateResponse;
-    if (!generated.response) {
-      throw new Error('Ollama vision response did not contain generated JSON.');
-    }
-
-    return this.parseAndValidatePayload(generated.response, input.maxScore);
+    return this.parseAndValidatePayload(generatedText, input.maxScore);
   }
 
   private async generateGrade(
-    input: GradeWithOllamaInput,
+    input: GradeWithGeminiInput,
   ): Promise<LlmGradePayload> {
+    const generatedText = await this.generateContent(
+      [{ text: this.buildPrompt(input) }],
+      input.maxScore,
+    );
+
+    return this.parseAndValidatePayload(generatedText, input.maxScore);
+  }
+
+  private async generateContent(
+    parts: Array<
+      | { text: string }
+      | { inline_data: { mime_type: string; data: string } }
+    >,
+    maxScore: number,
+  ): Promise<string> {
+    const apiKey = this.getApiKey();
     let response: Response;
     try {
-      response = await fetch(`${this.getBaseUrl()}/api/generate`, {
+      response = await fetch(`${this.getEndpoint()}?key=${apiKey}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
-          model: this.getModelName(),
-          prompt: this.buildPrompt(input),
-          stream: false,
-          format: this.getResponseSchema(input.maxScore),
-          options: {
+          contents: [
+            {
+              parts,
+            },
+          ],
+          generationConfig: {
             temperature: 0.1,
-            top_p: 0.9,
+            topP: 0.9,
+            responseMimeType: 'application/json',
+            responseSchema: this.getResponseSchema(maxScore),
           },
         }),
       });
     } catch (error) {
       throw new Error(
-        `Could not connect to Ollama at ${this.getBaseUrl()}: ${
+        `Could not connect to Gemini API: ${
           error instanceof Error ? error.message : 'fetch failed'
         }`,
       );
@@ -204,16 +205,26 @@ export class OllamaGradingService {
     if (!response.ok) {
       const text = await response.text();
       throw new Error(
-        `Ollama request failed with ${response.status}: ${text || response.statusText}`,
+        `Gemini request failed with ${response.status}: ${text || response.statusText}`,
       );
     }
 
-    const generated = (await response.json()) as OllamaGenerateResponse;
-    if (!generated.response) {
-      throw new Error('Ollama response did not contain generated JSON.');
+    const generated = (await response.json()) as GeminiGenerateResponse;
+    if (generated.error?.message) {
+      throw new Error(
+        `Gemini request failed: ${generated.error.status ?? generated.error.code ?? 'error'} ${generated.error.message}`,
+      );
     }
 
-    return this.parseAndValidatePayload(generated.response, input.maxScore);
+    const text = generated.candidates?.[0]?.content?.parts
+      ?.map((part) => part.text ?? '')
+      .join('')
+      .trim();
+    if (!text) {
+      throw new Error('Gemini response did not contain generated JSON.');
+    }
+
+    return text;
   }
 
   private parseAndValidatePayload(value: string, maxScore: number) {
@@ -221,11 +232,11 @@ export class OllamaGradingService {
     try {
       parsed = JSON.parse(value);
     } catch {
-      throw new Error('Ollama returned invalid JSON.');
+      throw new Error('Gemini returned invalid JSON.');
     }
 
     if (!parsed || typeof parsed !== 'object') {
-      throw new Error('Ollama grade must be a JSON object.');
+      throw new Error('Gemini grade must be a JSON object.');
     }
 
     const payload = parsed as Partial<LlmGradePayload>;
@@ -233,26 +244,26 @@ export class OllamaGradingService {
     const confidence = payload.confidence;
 
     if (!Number.isFinite(score)) {
-      throw new Error('Ollama grade is missing numeric score.');
+      throw new Error('Gemini grade is missing numeric score.');
     }
     if (score === undefined || score < 0 || score > maxScore) {
-      throw new Error(`Ollama score must be between 0 and ${maxScore}.`);
+      throw new Error(`Gemini score must be between 0 and ${maxScore}.`);
     }
     if (typeof payload.summary !== 'string' || !payload.summary.trim()) {
-      throw new Error('Ollama grade is missing summary.');
+      throw new Error('Gemini grade is missing summary.');
     }
     if (!Array.isArray(payload.rubricBreakdown)) {
-      throw new Error('Ollama grade is missing rubricBreakdown array.');
+      throw new Error('Gemini grade is missing rubricBreakdown array.');
     }
     if (!Array.isArray(payload.discrepancies)) {
-      throw new Error('Ollama grade is missing discrepancies array.');
+      throw new Error('Gemini grade is missing discrepancies array.');
     }
     if (!Number.isFinite(confidence)) {
-      throw new Error('Ollama grade is missing numeric confidence.');
+      throw new Error('Gemini grade is missing numeric confidence.');
     }
     if (typeof payload.manualReviewRecommended !== 'boolean') {
       throw new Error(
-        'Ollama grade is missing manualReviewRecommended boolean.',
+        'Gemini grade is missing manualReviewRecommended boolean.',
       );
     }
 
@@ -268,7 +279,7 @@ export class OllamaGradingService {
     } satisfies LlmGradePayload;
   }
 
-  private buildPrompt(input: GradeWithOllamaInput) {
+  private buildPrompt(input: GradeWithGeminiInput) {
     const compactContext = {
       task: 'Grade a student UML diagram against a teacher reference UML diagram. Award marks for semantic closeness, not exact drawing similarity.',
       maxScore: input.maxScore,
@@ -376,7 +387,6 @@ export class OllamaGradingService {
   private getResponseSchema(maxScore: number) {
     return {
       type: 'object',
-      additionalProperties: false,
       required: [
         'score',
         'maxScore',
@@ -395,7 +405,6 @@ export class OllamaGradingService {
           type: 'array',
           items: {
             type: 'object',
-            additionalProperties: false,
             required: [
               'criterionKey',
               'label',
@@ -416,7 +425,6 @@ export class OllamaGradingService {
           type: 'array',
           items: {
             type: 'object',
-            additionalProperties: false,
             required: ['category', 'severity', 'message'],
             properties: {
               category: { type: 'string' },
@@ -682,31 +690,41 @@ export class OllamaGradingService {
     return this.clamp(numerator / denominator, 0, 1);
   }
 
-  private getBaseUrl() {
-    return (
-      this.configService.get<string>('OLLAMA_BASE_URL') ??
-      'http://127.0.0.1:11434'
-    ).replace(/\/$/, '');
+  private getApiKey() {
+    const apiKey = this.configService.get<string>('GEMINI_API_KEY');
+    if (!apiKey) {
+      throw new Error('GEMINI_API_KEY is not configured.');
+    }
+    return encodeURIComponent(apiKey);
   }
 
   private getModelName() {
     return (
-      this.configService.get<string>('OLLAMA_MODEL') ?? 'qwen2.5:3b-instruct'
+      this.configService.get<string>('GEMINI_MODEL') ??
+      'gemini-flash-lite-latest'
     );
   }
 
-  private getVisionModelName() {
-    return (
-      this.configService.get<string>('OLLAMA_VISION_MODEL') ?? 'gemma3:4b'
-    );
+  private getEndpoint() {
+    const baseUrl = (
+      this.configService.get<string>('GEMINI_BASE_URL') ??
+      'https://generativelanguage.googleapis.com/v1beta'
+    ).replace(/\/$/, '');
+
+    return `${baseUrl}/models/${this.getModelName()}:generateContent`;
   }
 
-  private dataUrlToBase64(dataUrl: string) {
-    const match = dataUrl.match(/^data:image\/[^;]+;base64,(.+)$/);
-    if (!match?.[1]) {
+  private dataUrlToInlineData(dataUrl: string) {
+    const match = dataUrl.match(/^data:(image\/[^;]+);base64,(.+)$/);
+    if (!match?.[1] || !match?.[2]) {
       throw new Error('Image data URL is invalid.');
     }
-    return match[1];
+    return (
+      {
+        mime_type: match[1],
+        data: match[2],
+      }
+    );
   }
 
   private clamp(value: number, min: number, max: number) {

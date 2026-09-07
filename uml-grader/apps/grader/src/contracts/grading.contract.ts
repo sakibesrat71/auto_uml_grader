@@ -55,7 +55,6 @@ export interface GradeResponse {
 export interface GraderHealthResponse {
   status: 'ok';
   service: 'uml-grader';
-  ollamaBaseUrl: string;
-  ollamaModel: string;
-  ollamaVisionModel: string;
+  llmProvider: 'gemini';
+  geminiModel: string;
 }

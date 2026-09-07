@@ -44,9 +44,6 @@ type LoginRole = 'student' | 'teacher';
 
 @Injectable()
 export class AuthService {
-  private readonly allowedEmailPattern =
-    /^[a-zA-Z0-9._%+-]+@student\.adelaide\.edu\.au$/;
-
   constructor(
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     @InjectModel(SignupVerification.name)
@@ -59,7 +56,7 @@ export class AuthService {
 
   async signup(email: string, password: string) {
     const normalizedEmail = this.normalizeEmail(email);
-    this.validateStudentEmail(normalizedEmail);
+    this.validateEmail(normalizedEmail);
     this.validatePassword(password);
 
     const existingUser = await this.userModel
@@ -97,7 +94,7 @@ export class AuthService {
 
   async verifySignup(email: string, otp: string, response: Response) {
     const normalizedEmail = this.normalizeEmail(email);
-    this.validateStudentEmail(normalizedEmail);
+    this.validateEmail(normalizedEmail);
 
     const pendingSignup = await this.signupVerificationModel.findOne({
       email: normalizedEmail,
@@ -401,17 +398,20 @@ export class AuthService {
     refreshToken: string,
   ) {
     const isProd = this.configService.get<string>('NODE_ENV') === 'production';
+    const sameSite =
+      this.configService.get<string>('AUTH_COOKIE_SAME_SITE') ??
+      (isProd ? 'none' : 'lax');
     response.cookie(ACCESS_TOKEN_COOKIE, accessToken, {
       httpOnly: true,
       secure: isProd,
-      sameSite: 'lax',
+      sameSite: sameSite as 'lax' | 'strict' | 'none',
       path: '/',
       maxAge: this.minutesToMs(15),
     });
     response.cookie(REFRESH_TOKEN_COOKIE, refreshToken, {
       httpOnly: true,
       secure: isProd,
-      sameSite: 'lax',
+      sameSite: sameSite as 'lax' | 'strict' | 'none',
       path: '/',
       maxAge: this.daysToMs(7),
     });
@@ -458,11 +458,9 @@ export class AuthService {
     return email?.trim().toLowerCase();
   }
 
-  private validateStudentEmail(email: string) {
-    if (!email || !this.allowedEmailPattern.test(email)) {
-      throw new BadRequestException(
-        'Email must be a valid @student.adelaide.edu.au address.',
-      );
+  private validateEmail(email: string) {
+    if (!email || !this.isValidEmail(email)) {
+      throw new BadRequestException('Email must be a valid email address.');
     }
   }
 

@@ -6,7 +6,7 @@ Auto UML Grader is a full-stack web application for creating UML class diagram a
 - `apps/api`: the NestJS API, authentication layer, MongoDB persistence layer, and dashboard backend.
 - `apps/grader`: the NestJS grading service that parses, compares, and grades UML submissions.
 
-The app supports both UMLet UXF/XML files and PNG/JPEG diagram screenshots. UXF/XML submissions are parsed and compared structurally, while screenshot submissions are sent to a local vision-capable Ollama model for image-based grading.
+The app supports both UMLet UXF/XML files and PNG/JPEG diagram screenshots. UXF/XML submissions are parsed and compared structurally, while screenshot submissions are sent to Gemini for image-based grading.
 
 ## Project Overview
 
@@ -17,7 +17,7 @@ Teachers can create assignments, upload one or more reference solutions, invite 
 Automatic grading works in two modes:
 
 - **UXF/XML grading**: parses UMLet files with `fast-xml-parser`, normalizes classes, attributes, methods, and relationships, then compares the student submission against the teacher reference.
-- **Image grading**: sends teacher and student diagram screenshots to a local Ollama vision model and returns rubric-based feedback.
+- **Image grading**: sends teacher and student diagram screenshots to Gemini and returns rubric-based feedback.
 
 When the AI model is unavailable, the grader can fall back to deterministic scoring for UXF/XML comparisons.
 
@@ -70,14 +70,14 @@ When the AI model is unavailable, the grader can fall back to deterministic scor
 - TypeScript
 - `fast-xml-parser` for UMLet UXF/XML parsing
 - Deterministic UML comparison logic
-- Ollama integration for text and vision grading
+- Gemini integration for text and vision grading
 - Structured grading contracts for score, rubric, discrepancies, and flags
 
 ### Local Infrastructure
 
 - Node.js and npm
 - MongoDB running locally or through a hosted MongoDB URI
-- Optional Ollama local models for AI-assisted grading
+- Gemini API access for AI-assisted grading
 
 ## Repository Structure
 
@@ -184,7 +184,7 @@ The grader runs at `http://localhost:4100` by default.
 
 | Method | Route | Purpose |
 | --- | --- | --- |
-| `GET` | `/health` | Grader health and configured Ollama model details |
+| `GET` | `/health` | Grader health and configured Gemini model details |
 | `POST` | `/grade` | Grade UXF/XML solution and submission |
 | `POST` | `/grade-images` | Grade image solution and submission |
 | `POST` | `/parse-uxf` | Parse a UXF/XML file into normalized UML JSON |
@@ -200,14 +200,9 @@ Install these on your computer:
 - npm
 - MongoDB Community Server, MongoDB Atlas, or another reachable MongoDB instance
 - Git
-- Optional: Ollama for AI-assisted grading
+- Gemini API key from Google AI Studio for AI-assisted grading
 
-If you want Ollama grading:
-
-```bash
-ollama pull qwen2.5:3b-instruct
-ollama pull gemma3:4b
-```
+Create a free Gemini API key at `https://aistudio.google.com/apikey`.
 
 ### 2. Download the project
 
@@ -270,10 +265,8 @@ Create `apps/grader/.env`:
 
 ```env
 PORT=4100
-OLLAMA_BASE_URL=http://127.0.0.1:11434
-OLLAMA_MODEL=qwen2.5:3b-instruct
-OLLAMA_VISION_MODEL=gemma3:4b
-GRADER_USE_OLLAMA=true
+GEMINI_API_KEY=your-google-ai-studio-api-key
+GEMINI_MODEL=gemini-flash-lite-latest
 ```
 
 Create `apps/web/.env.local`:
@@ -287,7 +280,7 @@ Notes:
 
 - `JWT_ACCESS_SECRET` must match between `apps/api/.env` and `apps/web/.env.local` because the web middleware verifies the access token.
 - SMTP is required for student OTP signup and teacher invitation emails.
-- To run UXF/XML grading without Ollama, set `GRADER_USE_OLLAMA=false` in `apps/grader/.env`.
+- Gemini is required for AI explanations and PNG/JPEG image grading. UXF/XML submissions still have deterministic fallback if Gemini is unavailable.
 
 ### 5. Start MongoDB
 
@@ -353,13 +346,13 @@ Health checks:
 
 ## Typical Usage Flow
 
-1. Configure the API, web, grader, MongoDB, SMTP, and optional Ollama settings.
+1. Configure the API, web, grader, MongoDB, SMTP, and Gemini settings.
 2. Start all services.
 3. Use the superadmin route to invite teacher emails.
 4. Teachers accept the invite at `/teacher/signup`.
 5. Teachers log in and create assignments.
 6. Teachers upload reference UML solutions as UXF/XML files or images.
-7. Students sign up using an `@student.adelaide.edu.au` email and verify OTP.
+7. Students sign up using any valid email and verify OTP.
 8. Students open assigned work and upload their UML submission.
 9. The API stores the submission and calls the grader service in the background.
 10. Teachers review results, override marks when needed, and publish marks.
@@ -449,13 +442,7 @@ Make sure `JWT_ACCESS_SECRET` in `apps/web/.env.local` exactly matches `JWT_ACCE
 
 ### Student signup fails
 
-Student signup only accepts emails ending in:
-
-```text
-@student.adelaide.edu.au
-```
-
-Also confirm SMTP settings are present and valid.
+Confirm the email address is valid and SMTP settings are present.
 
 ### Teacher invite fails
 
@@ -477,17 +464,7 @@ SMTP_FROM
 
 Check that the grader service is running at `http://localhost:4100` and that `GRADER_BASE_URL` in `apps/api/.env` points to it.
 
-For Ollama grading, check:
-
-```bash
-ollama list
-```
-
-If you want deterministic UXF/XML fallback only, set:
-
-```env
-GRADER_USE_OLLAMA=false
-```
+For Gemini grading, confirm `GEMINI_API_KEY` and `GEMINI_MODEL` are configured in `apps/grader/.env`.
 
 ### Port already in use
 

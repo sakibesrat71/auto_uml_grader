@@ -3,7 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { DiagramComparisonService } from './comparison/diagram-comparison.service';
-import { OllamaGradingService } from './ollama/ollama-grading.service';
+import { GeminiGradingService } from './llm/gemini-grading.service';
 import { UxfParserService } from './uxf/uxf-parser.service';
 
 @Module({
@@ -17,7 +17,7 @@ import { UxfParserService } from './uxf/uxf-parser.service';
     AppService,
     UxfParserService,
     DiagramComparisonService,
-    OllamaGradingService,
+    GeminiGradingService,
   ],
 })
 export class AppModule {}

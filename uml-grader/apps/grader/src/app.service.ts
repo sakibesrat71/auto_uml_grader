@@ -12,7 +12,7 @@ import {
   GradeResponse,
   GraderHealthResponse,
 } from './contracts/grading.contract';
-import { OllamaGradingService } from './ollama/ollama-grading.service';
+import { GeminiGradingService } from './llm/gemini-grading.service';
 import { ParseUxfRequest } from './contracts/uml.contract';
 import { UxfParserService } from './uxf/uxf-parser.service';
 
@@ -22,20 +22,17 @@ export class AppService {
     private readonly configService: ConfigService,
     private readonly uxfParserService: UxfParserService,
     private readonly diagramComparisonService: DiagramComparisonService,
-    private readonly ollamaGradingService: OllamaGradingService,
+    private readonly geminiGradingService: GeminiGradingService,
   ) {}
 
   health(): GraderHealthResponse {
     return {
       status: 'ok',
       service: 'uml-grader',
-      ollamaBaseUrl:
-        this.configService.get<string>('OLLAMA_BASE_URL') ??
-        'http://127.0.0.1:11434',
-      ollamaModel:
-        this.configService.get<string>('OLLAMA_MODEL') ?? 'qwen2.5:3b-instruct',
-      ollamaVisionModel:
-        this.configService.get<string>('OLLAMA_VISION_MODEL') ?? 'gemma3:4b',
+      llmProvider: 'gemini',
+      geminiModel:
+        this.configService.get<string>('GEMINI_MODEL') ??
+        'gemini-flash-lite-latest',
     };
   }
 
@@ -53,39 +50,27 @@ export class AppService {
       return this.buildExactMatchGrade(comparison, request.maxScore);
     }
 
-    const useOllama =
-      this.configService.get<string>('GRADER_USE_OLLAMA') !== 'false';
-
-    if (useOllama) {
-      try {
-        return await this.ollamaGradingService.grade({
-          comparison,
-          deterministicDiscrepancies: discrepancies,
-          maxScore: request.maxScore,
-        });
-      } catch (error) {
-        return this.buildFallbackGrade(
-          comparison,
-          discrepancies,
-          request.maxScore,
-          error instanceof Error ? error.message : 'Unknown Ollama error.',
-        );
-      }
+    try {
+      return await this.geminiGradingService.grade({
+        comparison,
+        deterministicDiscrepancies: discrepancies,
+        maxScore: request.maxScore,
+      });
+    } catch (error) {
+      return this.buildFallbackGrade(
+        comparison,
+        discrepancies,
+        request.maxScore,
+        error instanceof Error ? error.message : 'Unknown Gemini error.',
+      );
     }
-
-    return this.buildFallbackGrade(
-      comparison,
-      discrepancies,
-      request.maxScore,
-      'Ollama grading disabled by GRADER_USE_OLLAMA=false.',
-    );
   }
 
   async gradeImages(request: GradeImagesRequest): Promise<GradeResponse> {
     this.validateGradeImagesRequest(request);
 
     try {
-      return await this.ollamaGradingService.gradeImages({
+      return await this.geminiGradingService.gradeImages({
         solutionImageDataUrl: request.solutionImageDataUrl,
         submissionImageDataUrl: request.submissionImageDataUrl,
         maxScore: request.maxScore,
@@ -114,8 +99,8 @@ export class AppService {
           invalidJsonRecovered: false,
           manualReviewRecommended: true,
           notes: [
-            'Image grading requires a vision-capable Ollama model.',
-            'Set OLLAMA_VISION_MODEL to a model with the vision capability, such as gemma3:4b.',
+            'Image grading requires Gemini API access.',
+            'Set GEMINI_API_KEY and GEMINI_MODEL in the grader service environment.',
           ],
         },
       };
@@ -144,7 +129,7 @@ export class AppService {
         invalidJsonRecovered: false,
         manualReviewRecommended: true,
         notes: [
-          `Ollama grading unavailable: ${fallbackReason}`,
+          `Gemini grading unavailable: ${fallbackReason}`,
           `Missing classes: ${comparison.summary.missingClassCount}.`,
           `Extra classes: ${comparison.summary.extraClassCount}.`,
           `Missing relationships: ${comparison.summary.missingRelationshipCount}.`,
@@ -173,7 +158,7 @@ export class AppService {
         extractionIssues: false,
         invalidJsonRecovered: false,
         manualReviewRecommended: false,
-        notes: ['Exact deterministic match; Ollama grading was not required.'],
+        notes: ['Exact deterministic match; Gemini grading was not required.'],
       },
     };
   }
