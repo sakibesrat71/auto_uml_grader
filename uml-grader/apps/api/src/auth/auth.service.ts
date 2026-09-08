@@ -514,6 +514,10 @@ export class AuthService {
       port,
       secure: port === 465,
       auth: { user, pass },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000,
+      requireTLS: port === 587,
     });
 
     await transporter.sendMail({
@@ -542,6 +546,10 @@ export class AuthService {
       port,
       secure: port === 465,
       auth: { user, pass },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000,
+      requireTLS: port === 587,
     });
 
     await transporter.sendMail({
