@@ -9,7 +9,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import * as nodemailer from 'nodemailer';
+import { sendBrevoEmail } from '../email/send-brevo-email';
 import {
   Assignment,
   AssignmentDocument,
@@ -1401,15 +1401,12 @@ export class TeacherAssignmentsService {
     recipientEmails: string[],
     user?: RequestUser,
   ) {
-    const host = this.configService.get<string>('SMTP_HOST');
-    const port = Number(this.configService.get<string>('SMTP_PORT') ?? '587');
-    const smtpUser = this.configService.get<string>('SMTP_USER');
-    const smtpPass = this.configService.get<string>('SMTP_PASS');
-    const from = this.configService.get<string>('SMTP_FROM') ?? smtpUser;
+    const apiKey = this.configService.get<string>('BREVO_API_KEY');
+    const from = this.configService.get<string>('SMTP_FROM');
 
-    if (!host || !smtpUser || !smtpPass || !from) {
+    if (!apiKey || !from) {
       const message =
-        'SMTP configuration is missing. Assignment reminders were skipped.';
+        'Brevo API configuration is missing. Assignment reminders were skipped.';
       this.logger.warn(message);
       return {
         sentCount: 0,
@@ -1419,13 +1416,6 @@ export class TeacherAssignmentsService {
         message,
       };
     }
-
-    const transporter = nodemailer.createTransport({
-      host,
-      port,
-      secure: port === 465,
-      auth: { user: smtpUser, pass: smtpPass },
-    });
 
     const dueDateText = assignment.dueAt
       ? assignment.dueAt.toLocaleString('en-AU', {
@@ -1440,11 +1430,12 @@ export class TeacherAssignmentsService {
     const results = await Promise.all(
       recipientEmails.map(async (email) => {
         try {
-          await transporter.sendMail({
-            from,
-            to: email,
-            subject: `New assignment: ${assignment.title}`,
-            text: [
+          await sendBrevoEmail(
+            this.configService,
+            this.logger,
+            email,
+            `New assignment: ${assignment.title}`,
+            [
               `Hello,`,
               ``,
               `${teacherName} assigned you a new UML assignment.`,
@@ -1456,7 +1447,7 @@ export class TeacherAssignmentsService {
               ``,
               `Please log in to UML Grader to review the assignment and submit your work.`,
             ].join('\n'),
-          });
+          );
 
           return { email, success: true as const };
         } catch (error) {
@@ -1490,15 +1481,12 @@ export class TeacherAssignmentsService {
     recipientEmails: string[],
     user?: RequestUser,
   ) {
-    const host = this.configService.get<string>('SMTP_HOST');
-    const port = Number(this.configService.get<string>('SMTP_PORT') ?? '587');
-    const smtpUser = this.configService.get<string>('SMTP_USER');
-    const smtpPass = this.configService.get<string>('SMTP_PASS');
-    const from = this.configService.get<string>('SMTP_FROM') ?? smtpUser;
+    const apiKey = this.configService.get<string>('BREVO_API_KEY');
+    const from = this.configService.get<string>('SMTP_FROM');
 
-    if (!host || !smtpUser || !smtpPass || !from) {
+    if (!apiKey || !from) {
       const message =
-        'SMTP configuration is missing. Marks published emails were skipped.';
+        'Brevo API configuration is missing. Marks published emails were skipped.';
       this.logger.warn(message);
       return {
         sentCount: 0,
@@ -1509,23 +1497,17 @@ export class TeacherAssignmentsService {
       };
     }
 
-    const transporter = nodemailer.createTransport({
-      host,
-      port,
-      secure: port === 465,
-      auth: { user: smtpUser, pass: smtpPass },
-    });
-
     const teacherName = user?.fullName || user?.email || 'Your teacher';
     const uniqueRecipients = [...new Set(recipientEmails.map((email) => email.trim().toLowerCase()))];
     const results = await Promise.all(
       uniqueRecipients.map(async (email) => {
         try {
-          await transporter.sendMail({
-            from,
-            to: email,
-            subject: `Marks published: ${assignment.title}`,
-            text: [
+          await sendBrevoEmail(
+            this.configService,
+            this.logger,
+            email,
+            `Marks published: ${assignment.title}`,
+            [
               `Hello,`,
               ``,
               `${teacherName} has published marks for ${assignment.title}.`,
@@ -1534,7 +1516,7 @@ export class TeacherAssignmentsService {
               ``,
               `Please log in to UML Grader to view your mark and feedback.`,
             ].join('\n'),
-          });
+          );
 
           return { email, success: true as const };
         } catch (error) {

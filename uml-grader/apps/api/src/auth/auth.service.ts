@@ -4,10 +4,10 @@ import {
   Injectable,
   InternalServerErrorException,
   Logger,
-  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { sendBrevoEmail } from '../email/send-brevo-email';
 import { JwtService } from '@nestjs/jwt';
 import { InjectModel } from '@nestjs/mongoose';
 import * as bcrypt from 'bcryptjs';
@@ -516,52 +516,13 @@ export class AuthService {
   }
 
   private async sendEmail(email: string, subject: string, textContent: string) {
-    const apiKey = this.getRequiredEnv('BREVO_API_KEY').trim();
-    // Retain the deployed sender setting: either an address or Name <address>.
-    const from = this.getRequiredEnv('SMTP_FROM')
-      .trim()
-      .replace(/^"(.*)"$/, '$1');
-    const mailbox = /^(.*?)\s*<([^<>]+)>$/.exec(from);
-    const sender = {
-      email: (mailbox?.[2] ?? from).trim(),
-      name: mailbox?.[1]?.trim().replace(/^"(.*)"$/, '$1') || 'Auto UML Grader',
-    };
-    if (!this.isValidEmail(sender.email)) {
-      throw new InternalServerErrorException(
-        'SMTP_FROM must contain a valid sender email.',
-      );
-    }
-
-    let response: globalThis.Response;
-    try {
-      response = await fetch('https://api.brevo.com/v3/smtp/email', {
-        method: 'POST',
-        headers: {
-          'api-key': apiKey,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({ sender, to: [{ email }], subject, textContent }),
-        signal: AbortSignal.timeout(15000),
-      });
-    } catch {
-      this.logger.error('Brevo HTTPS email request failed or timed out.');
-      throw new ServiceUnavailableException(
-        'Unable to send email right now. Please try again shortly.',
-      );
-    }
-
-    if (!response.ok) {
-      // Provider bodies may contain recipient data; log only the HTTP status.
-      this.logger.error(
-        `Brevo email request rejected (HTTP ${response.status}). Check API key, verified sender, and Brevo account limits.`,
-      );
-      await response.body?.cancel();
-      throw new ServiceUnavailableException(
-        'Unable to send email right now. Please try again shortly.',
-      );
-    }
-    await response.body?.cancel();
+    await sendBrevoEmail(
+      this.configService,
+      this.logger,
+      email,
+      subject,
+      textContent,
+    );
   }
 
   private async createTeacherInviteToken(email: string): Promise<string> {
