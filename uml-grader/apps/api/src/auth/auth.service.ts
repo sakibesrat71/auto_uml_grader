@@ -3,6 +3,8 @@ import {
   ConflictException,
   Injectable,
   InternalServerErrorException,
+  Logger,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -10,7 +12,6 @@ import { JwtService } from '@nestjs/jwt';
 import { InjectModel } from '@nestjs/mongoose';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
-import * as nodemailer from 'nodemailer';
 import { Request, Response } from 'express';
 import { Model } from 'mongoose';
 import { User, UserDocument } from '../schemas/entities.schema';
@@ -44,6 +45,8 @@ type LoginRole = 'student' | 'teacher';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     @InjectModel(SignupVerification.name)
@@ -497,67 +500,68 @@ export class AuthService {
   }
 
   private async sendOtpEmail(email: string, otp: string, expiresIn: number) {
-    const host = this.configService.get<string>('SMTP_HOST');
-    const port = Number(this.configService.get<string>('SMTP_PORT') ?? '587');
-    const user = this.configService.get<string>('SMTP_USER');
-    const pass = this.configService.get<string>('SMTP_PASS');
-    const from = this.configService.get<string>('SMTP_FROM') ?? user;
-
-    if (!host || !user || !pass || !from) {
-      throw new InternalServerErrorException(
-        'SMTP configuration is missing. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM.',
-      );
-    }
-
-    const transporter = nodemailer.createTransport({
-      host,
-      port,
-      secure: port === 465,
-      auth: { user, pass },
-      connectionTimeout: 10000,
-      greetingTimeout: 10000,
-      socketTimeout: 15000,
-      requireTLS: port === 587,
-    });
-
-    await transporter.sendMail({
-      from,
-      to: email,
-      subject: 'UML Grader signup verification OTP',
-      text: `Your OTP is ${otp}. It expires in ${expiresIn} minutes.`,
-    });
+    await this.sendEmail(
+      email,
+      'UML Grader signup verification OTP',
+      `Your OTP is ${otp}. It expires in ${expiresIn} minutes.`,
+    );
   }
 
   private async sendTeacherInviteEmail(email: string, inviteLink: string) {
-    const host = this.configService.get<string>('SMTP_HOST');
-    const port = Number(this.configService.get<string>('SMTP_PORT') ?? '587');
-    const user = this.configService.get<string>('SMTP_USER');
-    const pass = this.configService.get<string>('SMTP_PASS');
-    const from = this.configService.get<string>('SMTP_FROM') ?? user;
+    await this.sendEmail(
+      email,
+      'UML Grader teacher invitation',
+      `You were invited as a teacher. Complete signup here: ${inviteLink}`,
+    );
+  }
 
-    if (!host || !user || !pass || !from) {
+  private async sendEmail(email: string, subject: string, textContent: string) {
+    const apiKey = this.getRequiredEnv('BREVO_API_KEY').trim();
+    // Retain the deployed sender setting: either an address or Name <address>.
+    const from = this.getRequiredEnv('SMTP_FROM')
+      .trim()
+      .replace(/^"(.*)"$/, '$1');
+    const mailbox = /^(.*?)\s*<([^<>]+)>$/.exec(from);
+    const sender = {
+      email: (mailbox?.[2] ?? from).trim(),
+      name: mailbox?.[1]?.trim().replace(/^"(.*)"$/, '$1') || 'Auto UML Grader',
+    };
+    if (!this.isValidEmail(sender.email)) {
       throw new InternalServerErrorException(
-        'SMTP configuration is missing. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM.',
+        'SMTP_FROM must contain a valid sender email.',
       );
     }
 
-    const transporter = nodemailer.createTransport({
-      host,
-      port,
-      secure: port === 465,
-      auth: { user, pass },
-      connectionTimeout: 10000,
-      greetingTimeout: 10000,
-      socketTimeout: 15000,
-      requireTLS: port === 587,
-    });
+    let response: globalThis.Response;
+    try {
+      response = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          'api-key': apiKey,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({ sender, to: [{ email }], subject, textContent }),
+        signal: AbortSignal.timeout(15000),
+      });
+    } catch {
+      this.logger.error('Brevo HTTPS email request failed or timed out.');
+      throw new ServiceUnavailableException(
+        'Unable to send email right now. Please try again shortly.',
+      );
+    }
 
-    await transporter.sendMail({
-      from,
-      to: email,
-      subject: 'UML Grader teacher invitation',
-      text: `You were invited as a teacher. Complete signup here: ${inviteLink}`,
-    });
+    if (!response.ok) {
+      // Provider bodies may contain recipient data; log only the HTTP status.
+      this.logger.error(
+        `Brevo email request rejected (HTTP ${response.status}). Check API key, verified sender, and Brevo account limits.`,
+      );
+      await response.body?.cancel();
+      throw new ServiceUnavailableException(
+        'Unable to send email right now. Please try again shortly.',
+      );
+    }
+    await response.body?.cancel();
   }
 
   private async createTeacherInviteToken(email: string): Promise<string> {
